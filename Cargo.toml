@@ -27,6 +27,7 @@ anyhow = "1"
 async-trait = "0.1"
 chrono = { version = "0.4", features = ["serde"] }
 clap = { version = "4", features = ["derive", "env"] }
+clap_complete = "4"
 directories = "5"
 futures = "0.3"
 humantime-serde = "1"

@@ -70,15 +70,32 @@ pub fn first_number(s: &str) -> Option<f32> {
 }
 
 /// Four-digit year in a plausible range, e.g. from a title like `"Martial Peak (2024)"`.
+///
+/// Works on bytes rather than slicing by index: titles routinely contain multi-byte
+/// characters (en dashes, CJK), and slicing mid-character panics. An ASCII digit is
+/// never a UTF-8 continuation byte, so a window that is all digits is always a valid
+/// char boundary.
 fn year_from(s: &str) -> Option<u16> {
     let bytes = s.as_bytes();
-    for start in 0..bytes.len().saturating_sub(3) {
-        let window = &s[start..start + 4];
-        if window.bytes().all(|b| b.is_ascii_digit()) {
-            if let Ok(year) = window.parse::<u16>() {
-                if (1950..=2100).contains(&year) {
-                    return Some(year);
-                }
+    if bytes.len() < 4 {
+        return None;
+    }
+
+    for start in 0..=bytes.len() - 4 {
+        if !bytes[start..start + 4].iter().all(u8::is_ascii_digit) {
+            continue;
+        }
+        // Reject digits embedded in a longer run, so "12024" isn't read as 2024.
+        let bounded_left = start == 0 || !bytes[start - 1].is_ascii_digit();
+        let bounded_right =
+            start + 4 == bytes.len() || !bytes[start + 4].is_ascii_digit();
+        if !bounded_left || !bounded_right {
+            continue;
+        }
+
+        if let Ok(year) = s[start..start + 4].parse::<u16>() {
+            if (1950..=2100).contains(&year) {
+                return Some(year);
             }
         }
     }
@@ -387,6 +404,20 @@ mod tests {
         assert_eq!(year_from("Martial Peak (2024)"), Some(2024));
         assert_eq!(year_from("Episode 1080"), None);
         assert_eq!(year_from("no year"), None);
+    }
+
+    #[test]
+    fn year_scan_handles_multibyte_titles_without_panicking() {
+        // Regression: byte-index slicing panicked on the en dash in live titles.
+        assert_eq!(year_from("Renegade Immortal – Xian Ni (2025)"), Some(2025));
+        assert_eq!(year_from("斗罗大陆 – 第2季"), None);
+        assert_eq!(year_from("–"), None);
+    }
+
+    #[test]
+    fn year_is_not_read_out_of_a_longer_digit_run() {
+        assert_eq!(year_from("12024"), None);
+        assert_eq!(year_from("20244"), None);
     }
 
     #[test]

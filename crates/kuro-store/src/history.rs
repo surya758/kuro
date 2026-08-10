@@ -14,6 +14,10 @@ pub struct HistoryEntry {
     pub provider_id: String,
     pub series_id: String,
     pub series_title: String,
+    /// Stored so `kuro next` / `kuro continue` can re-fetch the episode list
+    /// without rebuilding a slug — provider slugs are too inconsistent to construct.
+    #[serde(default)]
+    pub series_url: String,
     pub episode: f32,
     pub position_secs: u64,
     pub duration_secs: Option<u64>,
@@ -59,11 +63,13 @@ impl History {
     ///
     /// The list is kept sorted most-recent-first so `kuro continue` and `kuro list`
     /// can just read from the front.
+    #[allow(clippy::too_many_arguments)]
     pub fn record(
         &mut self,
         provider_id: &str,
         series_id: &str,
         series_title: &str,
+        series_url: &str,
         episode: f32,
         position_secs: u64,
         duration_secs: Option<u64>,
@@ -85,6 +91,7 @@ impl History {
                 provider_id: provider_id.to_string(),
                 series_id: series_id.to_string(),
                 series_title: series_title.to_string(),
+                series_url: series_url.to_string(),
                 episode,
                 position_secs,
                 duration_secs,
@@ -192,7 +199,7 @@ mod tests {
 
     fn history_with(position: u64, duration: Option<u64>) -> History {
         let mut h = History::default();
-        h.record("p", "s", "S", 1.0, position, duration);
+        h.record("p", "s", "S", "https://x.tld/s", 1.0, position, duration);
         h
     }
 
@@ -224,7 +231,7 @@ mod tests {
     #[test]
     fn rewatching_replaces_rather_than_appends() {
         let mut h = history_with(100, Some(1000));
-        h.record("p", "s", "S", 1.0, 300, Some(1000));
+        h.record("p", "s", "S", "https://x.tld/s", 1.0, 300, Some(1000));
         assert_eq!(h.entries.len(), 1);
         assert_eq!(h.entries[0].position_secs, 300);
     }
@@ -232,9 +239,9 @@ mod tests {
     #[test]
     fn last_completed_tracks_the_highest_episode() {
         let mut h = History::default();
-        h.record("p", "s", "S", 1.0, 1000, Some(1000));
-        h.record("p", "s", "S", 3.0, 1000, Some(1000));
-        h.record("p", "s", "S", 2.0, 10, Some(1000));
+        h.record("p", "s", "S", "https://x.tld/s", 1.0, 1000, Some(1000));
+        h.record("p", "s", "S", "https://x.tld/s", 3.0, 1000, Some(1000));
+        h.record("p", "s", "S", "https://x.tld/s", 2.0, 10, Some(1000));
         assert_eq!(h.last_completed_episode("p", "s"), Some(3.0));
     }
 
