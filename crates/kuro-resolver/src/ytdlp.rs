@@ -1,0 +1,338 @@
+//! `yt-dlp`-backed stream resolution.
+//!
+//! The providers targeted here don't host video — they embed third-party players
+//! (Rumble and Dailymotion on the reference provider), and `yt-dlp` already
+//! supports those and ~1800 other hosts. Delegating means `kuro` inherits upstream
+//! fixes when a host changes instead of maintaining extractors of its own.
+
+use crate::StreamResolver;
+use async_trait::async_trait;
+use kuro_core::{QualityPref, ResolveError, Stream, StreamKind};
+use serde::Deserialize;
+use std::collections::HashMap;
+use tracing::{debug, warn};
+use url::Url;
+
+#[derive(Debug, Deserialize)]
+struct YtDlpOutput {
+    #[serde(default)]
+    formats: Vec<YtDlpFormat>,
+    /// Present when the extractor returns a single pre-muxed stream.
+    #[serde(default)]
+    url: Option<String>,
+    #[serde(default)]
+    duration: Option<f64>,
+}
+
+#[derive(Debug, Deserialize)]
+struct YtDlpFormat {
+    url: Option<String>,
+    #[serde(default)]
+    height: Option<u32>,
+    #[serde(default)]
+    tbr: Option<f64>,
+    #[serde(default)]
+    protocol: Option<String>,
+    #[serde(default)]
+    ext: Option<String>,
+    #[serde(default)]
+    vcodec: Option<String>,
+    #[serde(default)]
+    acodec: Option<String>,
+    #[serde(default)]
+    http_headers: Option<HashMap<String, String>>,
+}
+
+impl YtDlpFormat {
+    fn has_video(&self) -> bool {
+        // `None` means the extractor didn't say; Rumble's HLS ladder reports
+        // "unknown" codecs but is genuinely muxed video, so absence is not "no".
+        !matches!(self.vcodec.as_deref(), Some("none"))
+    }
+
+    fn has_audio(&self) -> bool {
+        !matches!(self.acodec.as_deref(), Some("none"))
+    }
+
+    fn kind(&self) -> StreamKind {
+        let proto = self.protocol.as_deref().unwrap_or("");
+        let ext = self.ext.as_deref().unwrap_or("");
+        if proto.contains("m3u8") || ext == "m3u8" {
+            StreamKind::Hls
+        } else if proto.contains("dash") || ext == "mpd" {
+            StreamKind::Dash
+        } else {
+            StreamKind::ProgressiveMp4
+        }
+    }
+}
+
+pub struct YtDlpResolver {
+    binary: String,
+}
+
+impl Default for YtDlpResolver {
+    fn default() -> Self {
+        Self::new("yt-dlp")
+    }
+}
+
+impl YtDlpResolver {
+    pub fn new(binary: impl Into<String>) -> Self {
+        Self {
+            binary: binary.into(),
+        }
+    }
+
+    /// Whether the `yt-dlp` binary is present and runnable.
+    ///
+    /// `yt-dlp` is an optional runtime dependency: when it is missing, mirrors
+    /// whose hosts need it are reported as unresolvable rather than the whole
+    /// command failing.
+    pub async fn is_available(&self) -> bool {
+        tokio::process::Command::new(&self.binary)
+            .arg("--version")
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .await
+            .map(|s| s.success())
+            .unwrap_or(false)
+    }
+
+    pub async fn version(&self) -> Option<String> {
+        let out = tokio::process::Command::new(&self.binary)
+            .arg("--version")
+            .output()
+            .await
+            .ok()?;
+        if !out.status.success() {
+            return None;
+        }
+        Some(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    }
+
+    /// Total media duration in seconds, used to compute watch progress.
+    pub async fn duration_secs(&self, url: &Url) -> Option<u64> {
+        let output = self.run_json(url).await.ok()?;
+        output.duration.map(|d| d as u64)
+    }
+
+    async fn run_json(&self, url: &Url) -> Result<YtDlpOutput, ResolveError> {
+        debug!(%url, "invoking yt-dlp");
+
+        let output = tokio::process::Command::new(&self.binary)
+            .args(["-J", "--no-warnings", "--no-playlist", url.as_str()])
+            .output()
+            .await
+            .map_err(|e| {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    ResolveError::YtDlpMissing
+                } else {
+                    ResolveError::Io(e)
+                }
+            })?;
+
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let message = stderr
+                .lines()
+                .find(|l| l.contains("ERROR"))
+                .unwrap_or_else(|| stderr.trim())
+                .to_string();
+            return Err(ResolveError::YtDlp(message));
+        }
+
+        serde_json::from_slice(&output.stdout)
+            .map_err(|e| ResolveError::BadOutput(e.to_string()))
+    }
+}
+
+/// Order candidate formats best-first for the requested quality.
+///
+/// For a specific height, formats at or below the target come first (closest
+/// first), then anything above it ascending — so asking for 1080p on a host that
+/// only offers 1440p still plays rather than failing.
+fn rank_formats(mut streams: Vec<Stream>, pref: QualityPref) -> Vec<Stream> {
+    match pref.target_height() {
+        None => {
+            streams.sort_by(|a, b| {
+                let (ha, hb) = (a.height.unwrap_or(0), b.height.unwrap_or(0));
+                match pref {
+                    QualityPref::Worst => ha.cmp(&hb),
+                    _ => hb.cmp(&ha),
+                }
+            });
+        }
+        Some(target) => {
+            streams.sort_by_key(|s| {
+                let h = s.height.unwrap_or(0);
+                if h <= target {
+                    // At-or-below: closest to the target wins.
+                    (0u8, target - h)
+                } else {
+                    // Above: smallest overshoot wins.
+                    (1u8, h - target)
+                }
+            });
+        }
+    }
+    streams
+}
+
+#[async_trait]
+impl StreamResolver for YtDlpResolver {
+    fn name(&self) -> &str {
+        "yt-dlp"
+    }
+
+    fn can_handle(&self, _url: &Url) -> bool {
+        // yt-dlp has a generic extractor, so it is the catch-all. Native resolvers
+        // are consulted first and only exist for hosts yt-dlp does not cover.
+        true
+    }
+
+    async fn resolve(&self, url: &Url, pref: QualityPref) -> Result<Vec<Stream>, ResolveError> {
+        let output = self.run_json(url).await?;
+
+        let to_stream = |f: &YtDlpFormat| -> Option<Stream> {
+            let parsed = Url::parse(f.url.as_ref()?).ok()?;
+            Some(Stream {
+                url: parsed,
+                kind: f.kind(),
+                height: f.height,
+                bitrate_kbps: f.tbr.map(|t| t as u32),
+                headers: f.http_headers.clone().unwrap_or_default(),
+            })
+        };
+
+        // Prefer muxed formats; a video-only rendition would play silent, so those
+        // are used only when the host offers nothing better.
+        let mut streams: Vec<Stream> = output
+            .formats
+            .iter()
+            .filter(|f| f.has_video() && f.has_audio())
+            .filter_map(to_stream)
+            .collect();
+
+        if streams.is_empty() {
+            streams = output
+                .formats
+                .iter()
+                .filter(|f| f.has_video())
+                .filter_map(to_stream)
+                .collect();
+            if !streams.is_empty() {
+                warn!(%url, "no muxed format available; using video-only rendition");
+            }
+        }
+
+        // Some extractors return a single top-level URL instead of a format list.
+        if streams.is_empty() {
+            if let Some(direct) = output.url.as_ref().and_then(|u| Url::parse(u).ok()) {
+                streams.push(Stream {
+                    url: direct,
+                    kind: StreamKind::Hls,
+                    height: None,
+                    bitrate_kbps: None,
+                    headers: HashMap::new(),
+                });
+            }
+        }
+
+        if streams.is_empty() {
+            return Err(ResolveError::NoFormats {
+                url: url.to_string(),
+            });
+        }
+
+        Ok(rank_formats(streams, pref))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn stream(height: u32) -> Stream {
+        Stream {
+            url: Url::parse("https://example.com/x.m3u8").expect("valid url"),
+            kind: StreamKind::Hls,
+            height: Some(height),
+            bitrate_kbps: None,
+            headers: HashMap::new(),
+        }
+    }
+
+    fn heights(streams: &[Stream]) -> Vec<u32> {
+        streams.iter().filter_map(|s| s.height).collect()
+    }
+
+    #[test]
+    fn best_prefers_the_highest_rendition() {
+        let ranked = rank_formats(vec![stream(720), stream(2160), stream(1080)], QualityPref::Best);
+        assert_eq!(heights(&ranked)[0], 2160);
+    }
+
+    #[test]
+    fn worst_prefers_the_lowest_rendition() {
+        let ranked = rank_formats(vec![stream(720), stream(2160), stream(360)], QualityPref::Worst);
+        assert_eq!(heights(&ranked)[0], 360);
+    }
+
+    #[test]
+    fn specific_quality_picks_exact_match_first() {
+        let ranked = rank_formats(
+            vec![stream(480), stream(1080), stream(2160)],
+            QualityPref::P1080,
+        );
+        assert_eq!(heights(&ranked)[0], 1080);
+    }
+
+    #[test]
+    fn specific_quality_steps_down_before_up() {
+        let ranked = rank_formats(vec![stream(720), stream(1440)], QualityPref::P1080);
+        assert_eq!(heights(&ranked)[0], 720);
+    }
+
+    #[test]
+    fn specific_quality_still_plays_when_only_higher_exists() {
+        let ranked = rank_formats(vec![stream(1440), stream(2160)], QualityPref::P1080);
+        assert_eq!(heights(&ranked)[0], 1440);
+    }
+
+    #[test]
+    fn video_only_formats_are_detected() {
+        let f = YtDlpFormat {
+            url: Some("https://x/y".into()),
+            height: Some(1080),
+            tbr: None,
+            protocol: None,
+            ext: None,
+            vcodec: Some("avc1".into()),
+            acodec: Some("none".into()),
+            http_headers: None,
+        };
+        assert!(f.has_video());
+        assert!(!f.has_audio());
+    }
+
+    #[test]
+    fn unknown_codecs_are_treated_as_present() {
+        // Rumble reports "unknown" for its muxed HLS ladder; excluding those would
+        // leave the reference provider unplayable.
+        let f = YtDlpFormat {
+            url: Some("https://x/y".into()),
+            height: Some(1080),
+            tbr: None,
+            protocol: Some("m3u8_native".into()),
+            ext: Some("mp4".into()),
+            vcodec: None,
+            acodec: None,
+            http_headers: None,
+        };
+        assert!(f.has_video());
+        assert!(f.has_audio());
+        assert_eq!(f.kind(), StreamKind::Hls);
+    }
+}

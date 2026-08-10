@@ -1,0 +1,46 @@
+# Lucifer Donghua — reference provider.
+#
+# The site runs a common WordPress anime theme with stable structural class names
+# (`listupd`, `bs`, `eplister`, `select.mirror`), so it needs no custom Rust.
+#
+# Verified chain: /?s= -> /anime/{slug}/ -> episode page -> /v/{n}/ -> Rumble
+# and Dailymotion embeds.
+
+id           = "luciferdonghua"
+display_name = "Lucifer Donghua"
+base_url     = "https://luciferdonghua.in"
+
+[endpoints]
+search = "/?s={query}"
+series = "/anime/{slug}/"
+
+[selectors.search]
+item   = "div.listupd article.bs"
+title  = "h2[itemprop=headline]"
+url    = "a[href]"
+poster = "img"
+
+[selectors.series]
+title    = "h1.entry-title"
+synopsis = "div.synp div.entry-content"
+poster   = "div.thumb img"
+genres   = "div.genxed a"
+info_row = "div.spe span"
+
+[selectors.episodes]
+item   = "div.eplister ul li a"
+number = "div.epl-num"
+title  = "div.epl-title"
+
+# Options hold `/v/{n}/` page URLs, not embeds — each needs a further fetch.
+[selectors.mirrors]
+option     = "select.mirror option[value]"
+value_attr = "value"
+index_attr = "data-index"
+
+[selectors.embed]
+iframe = "iframe"
+
+[request]
+user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+referer    = "https://luciferdonghua.in/"
