@@ -1,0 +1,57 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/kuro-cli",
+    "crates/kuro-core",
+    "crates/kuro-providers",
+    "crates/kuro-resolver",
+    "crates/kuro-player",
+    "crates/kuro-store",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license = "MIT"
+repository = "https://github.com/suryakant/kuro"
+
+[workspace.dependencies]
+kuro-core = { path = "crates/kuro-core" }
+kuro-providers = { path = "crates/kuro-providers" }
+kuro-resolver = { path = "crates/kuro-resolver" }
+kuro-player = { path = "crates/kuro-player" }
+kuro-store = { path = "crates/kuro-store" }
+
+anyhow = "1"
+async-trait = "0.1"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4", features = ["derive", "env"] }
+directories = "5"
+futures = "0.3"
+humantime-serde = "1"
+once_cell = "1"
+reqwest = { version = "0.12", default-features = false, features = [
+    "rustls-tls",
+    "cookies",
+    "gzip",
+    "brotli",
+    "json",
+] }
+scraper = "0.20"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "process", "time", "fs", "sync"] }
+toml = "0.8"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+url = { version = "2", features = ["serde"] }
+
+[profile.release]
+opt-level = "z"
+lto = true
+codegen-units = 1
+strip = true
+# NOT `panic = "abort"`: provider isolation in kuro-core::orchestrator relies on
+# `catch_unwind`, which only works while panics unwind.

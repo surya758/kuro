@@ -1,0 +1,26 @@
+[package]
+name = "kuro-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "kuro"
+path = "src/main.rs"
+
+[dependencies]
+kuro-core.workspace = true
+kuro-player.workspace = true
+kuro-providers.workspace = true
+kuro-resolver.workspace = true
+kuro-store.workspace = true
+
+anyhow.workspace = true
+chrono.workspace = true
+clap.workspace = true
+futures.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+url.workspace = true

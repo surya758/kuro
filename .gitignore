@@ -1,0 +1,8 @@
+/target
+**/*.rs.bk
+*.pdb
+
+# OMC operational artifacts
+.omc/
+
+.DS_Store
