@@ -35,6 +35,12 @@ completion (`bash`, `fish`, `elvish`, `powershell` also supported).
 
 ## Usage
 
+Run `kuro` with no arguments for the interactive browser — search, pick a series,
+pick an episode, play. Vim keys throughout (`j`/`k` move, `Enter` select, `Esc`
+back, `/` search, `p` providers, `space` toggles a provider, `q` quits).
+
+Or drive it directly:
+
 ```sh
 kuro search <query>                       # search all enabled providers
 kuro watch  <query>                       # search, pick series + episode, play
@@ -166,9 +172,10 @@ analysis.
 
 ## Status
 
-Search, playback, provider toggling/health, history and resume all work. The
-interactive TUI is not built yet — bare `kuro` prints help. Response caching is not
-implemented; every command refetches.
+Working: interactive TUI, search, playback with mirror failover, provider
+toggling/health, watch history and resume.
+
+Not implemented: response caching (every command refetches), and downloading.
 
 ## Legal
 

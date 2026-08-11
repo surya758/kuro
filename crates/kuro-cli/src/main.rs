@@ -4,6 +4,7 @@ mod app;
 mod cli;
 mod commands;
 mod playback;
+mod tui;
 
 use anyhow::Result;
 use app::App;
@@ -71,11 +72,6 @@ async fn run(cli: Cli) -> Result<()> {
         Some(Command::Doctor) => commands::doctor(&mut app).await,
         Some(Command::Completions { .. }) => unreachable!("handled above"),
 
-        // The interactive TUI is not built yet; until then, show the commands.
-        None => {
-            Cli::command().print_help()?;
-            println!();
-            Ok(())
-        }
+        None => tui::run(&mut app).await,
     }
 }

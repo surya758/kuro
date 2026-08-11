@@ -663,12 +663,17 @@ exact selector that failed on `ParseFailure`.
 | **M2** | Playback | Mirror extraction, `YtDlpResolver`, IINA launch, `kuro play` — **first watchable episode** | ✅ done |
 | **M3** | Provider system | Declarative selector loading, toggle commands, health tracking + auto-disable | ✅ done |
 | **M4** | State | History, resume via mpv IPC, bookmarks, `kuro continue` / `kuro next` | ✅ done |
-| **M5** | TUI | `ratatui` search/series/provider screens | ⬜ not started |
-| **M6** | Hardening | Second provider (proves the abstraction), fixture test suite, Homebrew tap | ◐ `kuro doctor` done; rest open |
+| **M5** | TUI | `ratatui` search/series/provider screens | ✅ done |
+| **M6** | Hardening | Second provider, fixture test suite, `kuro doctor`, Homebrew tap | ◐ all but the Homebrew tap |
 
 M2 is the point at which the tool is genuinely usable; everything after is leverage.
 
-Until M5 lands, bare `kuro` prints help rather than opening a TUI.
+**M6 outcome — the abstraction held.** `donghuastream.org` was added with **zero
+provider-specific Rust**: one selector TOML, plus one *generic* capability
+(`value_encoding = "base64_html"`) that now benefits any site in that theme family.
+It differs from the reference provider in a real way — mirror options carry
+base64-encoded `<iframe>` markup instead of links to sub-pages — and that difference
+turned out to be expressible declaratively rather than needing a bespoke module.
 
 ---
 
