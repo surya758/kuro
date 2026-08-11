@@ -19,6 +19,7 @@ const VIDEO_HOSTS: &[&str] = &[
     "ok.ru",
     "rumble.com",
     "sendvid.com",
+    "streamplay.co.in",
     "streamtape.com",
     "streamwish.to",
     "vidhide.com",

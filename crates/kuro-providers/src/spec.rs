@@ -86,6 +86,24 @@ pub struct MirrorSelectors {
     /// `<option>` text blank, in which case labels are derived from the embed host.
     #[serde(default)]
     pub label: Option<String>,
+    /// How to interpret the option's value.
+    #[serde(default)]
+    pub value_encoding: MirrorValueEncoding,
+}
+
+/// What a mirror `<option>`'s value actually holds.
+///
+/// Sites on this theme family split into two camps, and the difference is not
+/// cosmetic: `Url` costs one extra fetch per mirror, `Base64Html` costs none.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum MirrorValueEncoding {
+    /// A link to a sub-page that must be fetched to find the player.
+    #[default]
+    Url,
+    /// Base64-encoded HTML containing the `<iframe>` itself — decode and read it
+    /// inline, no network round-trip.
+    Base64Html,
 }
 
 fn default_value_attr() -> String {

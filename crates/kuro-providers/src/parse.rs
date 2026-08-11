@@ -6,8 +6,10 @@
 
 use crate::hosts;
 use crate::spec::{
-    EmbedSelectors, EpisodeSelectors, MirrorSelectors, SearchSelectors, SeriesSelectors,
+    EmbedSelectors, EpisodeSelectors, MirrorSelectors, MirrorValueEncoding, SearchSelectors,
+    SeriesSelectors,
 };
+use base64::Engine as _;
 use kuro_core::{Episode, Mirror, ProviderError, ProviderId, Series, SeriesDetails, SeriesStatus};
 use scraper::{ElementRef, Html, Selector};
 use url::Url;
@@ -275,10 +277,16 @@ fn episode_number_from_url(url: &Url) -> Option<f32> {
     first_number(&slug[idx + "episode-".len()..])
 }
 
+/// Extract the mirror list from an episode page.
+///
+/// `page_url` is the episode page itself. It is used as the mirror's location when
+/// the option value carries the player inline rather than linking to a sub-page.
 pub fn parse_mirrors(
     html: &str,
     sel: &MirrorSelectors,
+    embed_sel: &EmbedSelectors,
     base: &Url,
+    page_url: &Url,
 ) -> Result<Vec<Mirror>, ProviderError> {
     let doc = Html::parse_document(html);
     let opt_sel = compile(&sel.option)?;
@@ -293,8 +301,25 @@ pub fn parse_mirrors(
         if raw.is_empty() {
             continue;
         }
-        let Ok(page_url) = base.join(raw) else {
-            continue;
+
+        // `Url` mirrors need a follow-up fetch; `Base64Html` mirrors carry the
+        // player markup inline, so the embed is resolved here and now.
+        let (page_url, embed_url) = match sel.value_encoding {
+            MirrorValueEncoding::Url => match base.join(raw) {
+                Ok(url) => (url, None),
+                Err(_) => continue,
+            },
+            MirrorValueEncoding::Base64Html => {
+                let Some(decoded) = decode_base64_html(raw) else {
+                    continue;
+                };
+                match parse_embed(&decoded, embed_sel, base) {
+                    Ok(url) => (page_url.clone(), Some(url)),
+                    // A mirror whose payload holds no known video host is dead;
+                    // the others on this episode may still work.
+                    Err(_) => continue,
+                }
+            }
         };
 
         let index = sel
@@ -304,20 +329,23 @@ pub fn parse_mirrors(
             .and_then(|v| v.parse::<u8>().ok())
             .unwrap_or((i + 1) as u8);
 
-        // Labels are usually blank in these themes and get filled in from the
-        // embed host once the mirror is resolved.
+        // Option text is usually blank in these themes. An already-resolved embed
+        // can be named from its host immediately; a URL mirror gets a placeholder
+        // until it is fetched.
         let label = text_of(opt);
-        let label = if label.is_empty() {
-            format!("Mirror {index}")
-        } else {
+        let label = if !label.is_empty() {
             label
+        } else if let Some(host) = embed_url.as_ref().and_then(|u| u.host_str()) {
+            hosts::host_label(host)
+        } else {
+            format!("Mirror {index}")
         };
 
         out.push(Mirror {
             index,
             label,
             page_url,
-            embed_url: None,
+            embed_url,
         });
     }
 
@@ -378,6 +406,25 @@ pub fn parse_embed(html: &str, sel: &EmbedSelectors, base: &Url) -> Result<Url, 
     } else {
         Err(ProviderError::parse(&sel.iframe, "video embed"))
     }
+}
+
+/// Decode a base64 mirror payload into HTML.
+///
+/// Accepts both standard and URL-safe alphabets, and tolerates missing padding —
+/// sites are inconsistent about all three.
+fn decode_base64_html(raw: &str) -> Option<String> {
+    use base64::engine::general_purpose::{STANDARD, STANDARD_NO_PAD, URL_SAFE, URL_SAFE_NO_PAD};
+
+    let bytes = STANDARD
+        .decode(raw)
+        .or_else(|_| STANDARD_NO_PAD.decode(raw))
+        .or_else(|_| URL_SAFE.decode(raw))
+        .or_else(|_| URL_SAFE_NO_PAD.decode(raw))
+        .ok()?;
+
+    // Payloads are HTML fragments; lossy conversion keeps a stray bad byte from
+    // discarding an otherwise usable mirror.
+    Some(String::from_utf8_lossy(&bytes).into_owned())
 }
 
 /// Resolve a raw attribute value to an absolute URL, keeping it only if it points

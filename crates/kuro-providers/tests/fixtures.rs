@@ -148,8 +148,17 @@ fn series_page_yields_metadata() {
 #[test]
 fn episode_page_yields_all_mirrors() {
     let spec = spec();
-    let mirrors =
-        parse::parse_mirrors(EPISODE_HTML, &spec.selectors.mirrors, &base()).expect("mirrors parse");
+    let episode_url =
+        Url::parse("https://luciferdonghua.in/martial-god-asura-season-2-episode-15-lucifer-donghua/")
+            .expect("valid episode url");
+    let mirrors = parse::parse_mirrors(
+        EPISODE_HTML,
+        &spec.selectors.mirrors,
+        &spec.selectors.embed,
+        &base(),
+        &episode_url,
+    )
+    .expect("mirrors parse");
 
     assert_eq!(mirrors.len(), 5, "recorded episode offers five mirrors");
 
@@ -192,6 +201,120 @@ fn javascript_mounted_mirror_resolves_via_metadata() {
         embed.query().map(|q| q.contains("video=")).unwrap_or(false),
         "Dailymotion embed carries its video id, got {embed}"
     );
+}
+
+/// The second provider, which shares the theme but encodes its mirrors differently.
+/// These tests exist mainly to prove the declarative layer really did absorb a new
+/// site without provider-specific Rust.
+mod donghuastream {
+    use super::*;
+
+    const SPEC_TOML: &str = include_str!("../../../providers.d/donghuastream.toml");
+    const SEARCH_HTML: &str = include_str!("../../../tests/fixtures/donghuastream/search.html");
+    const SERIES_HTML: &str = include_str!("../../../tests/fixtures/donghuastream/series.html");
+    const EPISODE_HTML: &str = include_str!("../../../tests/fixtures/donghuastream/episode.html");
+
+    fn spec() -> ProviderSpec {
+        ProviderSpec::from_toml(SPEC_TOML).expect("shipped spec parses")
+    }
+
+    fn base() -> Url {
+        Url::parse("https://donghuastream.org").expect("valid base url")
+    }
+
+    #[test]
+    fn search_page_parses_with_the_shared_selectors() {
+        let series = parse::parse_search(
+            SEARCH_HTML,
+            &spec().selectors.search,
+            &base(),
+            &ProviderId::new("donghuastream"),
+        )
+        .expect("search page parses");
+
+        assert_eq!(series.len(), 10);
+        assert!(series
+            .iter()
+            .all(|s| s.url.path().starts_with("/anime/") && !s.title.trim().is_empty()));
+    }
+
+    #[test]
+    fn series_page_parses_episodes_and_synopsis() {
+        let episodes = parse::parse_episodes(
+            SERIES_HTML,
+            &spec().selectors.episodes,
+            "martial-god-asura-season-2",
+            &base(),
+        )
+        .expect("series page parses");
+
+        assert!(episodes.len() >= 15, "got {}", episodes.len());
+        // The site lists newest-first; the parser must normalise to ascending.
+        assert!(episodes[0].number < episodes[episodes.len() - 1].number);
+
+        let details = parse::parse_series_details(SERIES_HTML, &spec().selectors.series)
+            .expect("details parse");
+        assert!(details.synopsis.as_deref().map(str::len).unwrap_or(0) > 40);
+    }
+
+    #[test]
+    fn base64_mirrors_resolve_inline_without_a_second_fetch() {
+        let spec = spec();
+        let episode_url = Url::parse(
+            "https://donghuastream.org/martial-god-asura-season-2-episode-15-multiple-subtitles/",
+        )
+        .expect("valid episode url");
+
+        let mirrors = parse::parse_mirrors(
+            EPISODE_HTML,
+            &spec.selectors.mirrors,
+            &spec.selectors.embed,
+            &base(),
+            &episode_url,
+        )
+        .expect("mirrors parse");
+
+        assert_eq!(mirrors.len(), 4, "recorded episode offers four mirrors");
+
+        // The whole point of `base64_html`: every embed is already known, so
+        // playback needs no extra round-trip per mirror.
+        assert!(
+            mirrors.iter().all(|m| m.embed_url.is_some()),
+            "every base64 mirror should resolve inline"
+        );
+
+        let hosts: Vec<String> = mirrors
+            .iter()
+            .filter_map(|m| m.embed_url.as_ref()?.host_str().map(str::to_string))
+            .collect();
+
+        for expected in ["dailymotion", "rumble", "streamplay", "ok.ru"] {
+            assert!(
+                hosts.iter().any(|h| h.contains(expected)),
+                "expected a {expected} mirror, got {hosts:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn base64_mirrors_are_labelled_by_host_not_by_index() {
+        let spec = spec();
+        let episode_url = Url::parse("https://donghuastream.org/ep/").expect("valid url");
+        let mirrors = parse::parse_mirrors(
+            EPISODE_HTML,
+            &spec.selectors.mirrors,
+            &spec.selectors.embed,
+            &base(),
+            &episode_url,
+        )
+        .expect("mirrors parse");
+
+        assert!(
+            mirrors.iter().all(|m| !m.label.starts_with("Mirror ")),
+            "inline embeds should be named from their host: {:?}",
+            mirrors.iter().map(|m| &m.label).collect::<Vec<_>>()
+        );
+    }
 }
 
 #[test]

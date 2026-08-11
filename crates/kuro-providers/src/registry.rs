@@ -13,10 +13,16 @@ use std::sync::Arc;
 use tracing::{debug, warn};
 
 /// Specs shipped with the binary.
-const BUILTIN_SPECS: &[(&str, &str)] = &[(
-    "luciferdonghua",
-    include_str!("../../../providers.d/luciferdonghua.toml"),
-)];
+const BUILTIN_SPECS: &[(&str, &str)] = &[
+    (
+        "luciferdonghua",
+        include_str!("../../../providers.d/luciferdonghua.toml"),
+    ),
+    (
+        "donghuastream",
+        include_str!("../../../providers.d/donghuastream.toml"),
+    ),
+];
 
 pub struct LoadedProvider {
     pub provider: Arc<dyn Provider>,
@@ -176,6 +182,7 @@ mod tests {
         let registry = Registry::load(None);
         assert!(registry.errors.is_empty(), "errors: {:?}", registry.errors);
         assert!(registry.get("luciferdonghua").is_some());
+        assert!(registry.get("donghuastream").is_some());
         assert!(!registry.is_user_override("luciferdonghua"));
     }
 }

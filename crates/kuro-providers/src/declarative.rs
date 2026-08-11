@@ -113,7 +113,13 @@ impl Provider for DeclarativeProvider {
         episode: &Episode,
     ) -> Result<Vec<Mirror>, ProviderError> {
         let html = self.get(ctx, &episode.url).await?;
-        parse::parse_mirrors(&html, &self.spec.selectors.mirrors, &self.base_url)
+        parse::parse_mirrors(
+            &html,
+            &self.spec.selectors.mirrors,
+            &self.spec.selectors.embed,
+            &self.base_url,
+            &episode.url,
+        )
     }
 
     async fn embed_url(&self, ctx: &FetchCtx, mirror: &Mirror) -> Result<Url, ProviderError> {
