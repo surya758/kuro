@@ -52,9 +52,8 @@ pub trait Player: Send + Sync {
 
 /// A unique IPC socket path for one playback session.
 pub fn ipc_socket_path() -> String {
-    format!(
-        "{}/kuro-mpv-{}.sock",
-        std::env::temp_dir().display(),
-        std::process::id()
-    )
+    std::env::temp_dir()
+        .join(format!("kuro-mpv-{}.sock", std::process::id()))
+        .display()
+        .to_string()
 }

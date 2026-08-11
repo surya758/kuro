@@ -98,28 +98,36 @@ against hostile input, and a strict type system that makes provider failures
 Go is an acceptable substitute; TypeScript is acceptable if distribution size is not a
 concern; C++ is not appropriate for this problem.
 
-> **Note on the local machine:** neither `cargo` nor `go` is currently installed;
-> `node`, `bun`, `ffmpeg`, `mpv`, and `yt-dlp` are present. Rust setup is a one-time
-> `rustup` install and is not a meaningful blocker.
+> **Note on the local machine:** at the time of this decision neither `cargo` nor `go`
+> was installed, while `node`, `bun`, `ffmpeg`, `mpv`, and `yt-dlp` were. Rust was set
+> up with a one-time `rustup` install, which took under a minute — it was not a
+> meaningful blocker.
 
 ### Dependency set
+
+Shipped:
 
 | Concern | Crate | Why |
 |---|---|---|
 | Async runtime | `tokio` | Parallel multi-provider fanout |
 | HTTP | `reqwest` (rustls, cookies, gzip/brotli) | No OpenSSL linkage; cookie jar for sites that require it |
-| HTML parsing | `scraper` (html5ever) | Browser-grade parsing of malformed markup |
-| CSS selectors | `scraper::Selector` | Compiled once, reused |
-| JSON | `serde` / `serde_json` | Config, state, yt-dlp interop |
-| Config | `toml` + `figment` | Layered file/env/flag config |
-| CLI parsing | `clap` v4 (derive) | Subcommands, shell completions |
-| TUI | `ratatui` + `crossterm` | Browse/search interface |
+| HTML parsing + selectors | `scraper` (html5ever) | Browser-grade parsing of malformed markup |
+| JSON | `serde` / `serde_json` | State, yt-dlp interop |
+| Config | `toml` | Config and provider selector specs |
+| CLI parsing | `clap` v4 (derive) + `clap_complete` | Subcommands, shell completions |
 | Errors | `thiserror` (lib) / `anyhow` (bin) | Typed provider errors, ergonomic top level |
 | Logging | `tracing` + `tracing-subscriber` | Structured per-provider diagnostics |
-| Fuzzy match | `nucleo-matcher` | Ranking search results across providers |
-| Caching | `moka` | In-memory TTL cache for search/metadata |
-| Paths | `directories` | XDG-correct macOS paths |
-| Testing | `wiremock`, `insta` | Fixture-based scraper regression tests |
+| Paths | `directories` | Platform-correct macOS locations |
+| Time | `chrono` | Timestamps in history and health records |
+
+Planned, not yet added — listed so the intent is on record:
+
+| Concern | Crate | For |
+|---|---|---|
+| TUI | `ratatui` + `crossterm` | M5 browse/search interface |
+| Fuzzy match | `nucleo-matcher` | Replacing the hand-rolled ranking in `orchestrator::rank` |
+| Caching | `moka` | TTL cache for search/metadata (currently uncached) |
+| Testing | `wiremock`, `insta` | M6 fixture-based scraper regression tests |
 
 ---
 
@@ -148,7 +156,7 @@ kuro-cli ──► kuro-core ──► kuro-providers ──► (declarative sel
                  │
                  ├────────► kuro-resolver ──► yt-dlp / native extractors
                  ├────────► kuro-player   ──► IINA
-                 └────────► kuro-store    ──► ~/.config/kuro, ~/.local/share/kuro
+                 └────────► kuro-store    ──► ~/Library/Application Support/kuro
 ```
 
 `kuro-core` is the only crate that knows about all the others. Providers know nothing
@@ -278,7 +286,7 @@ kuro provider test    luciferdonghua   # run the full chain, print timings
 kuro provider reload                   # re-read selector TOMLs without restart
 ```
 
-### Config — `~/.config/kuro/config.toml`
+### Config — `~/Library/Application Support/kuro/config.toml`
 
 ```toml
 [general]
@@ -384,9 +392,17 @@ work.
 
 ### Mirror failover
 
-Resolution walks mirrors in the configured preference order. A mirror that fails to
-resolve, or resolves to a URL that returns non-2xx on a `HEAD` probe, is skipped and the
-next is tried. Only when every mirror fails does the episode report as unplayable.
+Resolution walks mirrors in the configured preference order. A mirror whose embed
+cannot be extracted, or that yields no playable format, is skipped and the next is
+tried. Only when every mirror fails does the episode report as unplayable, listing
+the per-mirror reason.
+
+Embed extraction for all mirrors runs concurrently, since it costs one fetch each;
+only *stream resolution* is sequential, because the first success ends the search.
+
+> An additional `HEAD` pre-flight on the resolved URL was considered and dropped:
+> these CDN URLs are signed and range-scoped, so a `HEAD` is not a reliable
+> predictor of whether a `GET` will succeed. Resolution failure is the real signal.
 
 ---
 
@@ -561,12 +577,12 @@ macOS-correct paths via `directories`:
 
 | Path | Contents |
 |---|---|
-| `~/.config/kuro/config.toml` | User config |
-| `~/.config/kuro/providers.d/*.toml` | User selector overrides (shadow shipped defaults) |
-| `~/.local/share/kuro/history.json` | Watch history + resume positions |
-| `~/.local/share/kuro/bookmarks.json` | Followed series |
-| `~/.local/share/kuro/health.json` | Per-provider failure counts, auto-disable state |
-| `~/.cache/kuro/` | HTTP response cache (TTL'd) |
+| `~/Library/Application Support/kuro/config.toml` | User config |
+| `~/Library/Application Support/kuro/providers.d/*.toml` | User selector overrides (shadow shipped defaults) |
+| `~/Library/Application Support/kuro/history.json` | Watch history + resume positions |
+| `~/Library/Application Support/kuro/bookmarks.json` | Followed series |
+| `~/Library/Application Support/kuro/health.json` | Per-provider failure counts, auto-disable state |
+| `~/Library/Caches/kuro/` | HTTP response cache (TTL'd) |
 
 ```jsonc
 // history.json
@@ -590,27 +606,47 @@ Writes are atomic (temp file + rename) so a crash mid-write cannot corrupt histo
 
 ## 12. Cross-Cutting Concerns
 
-### Rate limiting & politeness
-A shared `governor` limiter per provider host (default 4 req/s, configurable) plus a
-realistic browser `User-Agent`. Concurrent mirror fetches respect the same limiter.
+### Rate limiting & politeness — *implemented*
+A per-host semaphore in `FetchCtx` bounds concurrent in-flight requests to a provider
+(default 4), and every request carries a realistic browser `User-Agent` plus the
+provider's configured `Referer`. Concurrent mirror fetches share the same limiter.
 
-### Caching
-`moka` TTL cache: search results 5 min, series metadata 1 h, episode lists 15 min,
-resolved streams 0 (CDN URLs are short-lived and signed — never cached).
+> A token-bucket rate limit (`governor`) was specified originally and deliberately not
+> built: the semaphore already prevents bursts, and no provider has returned `429` in
+> testing. It stays available if one starts to.
 
-### Retries
-Exponential backoff with jitter on `Network`/`Timeout` only. `ParseFailure`, `NotFound`,
-and `Blocked` are **not** retried — retrying a selector that no longer matches just wastes
-time and hammers the site.
+### Retries — *implemented*
+Exponential backoff on `Network`/`Timeout`/`RateLimited`/`Upstream`, honouring an
+explicit `Retry-After` when present. `ParseFailure`, `NotFound`, and `Blocked` are
+**not** retried — retrying a selector that no longer matches just wastes time and
+hammers the site. This is enforced by `ProviderError::is_retryable`.
+
+### Caching — *not yet built*
+Planned `moka` TTL cache: search results 5 min, series metadata 1 h, episode lists
+15 min. Resolved streams are never cached — CDN URLs are signed and short-lived.
+Today every command refetches.
 
 ### Testing strategy
-- **Fixture tests (primary).** Real HTML responses recorded into `tests/fixtures/`; each
-  scraper is asserted against them offline. These run in CI and catch refactor
-  regressions without touching the network.
+
+Built (48 unit tests, all offline and network-free):
+- **Parsing logic** — episode-number extraction, slug handling, year detection
+  (including the multi-byte-title case that panicked in early live testing), and
+  ad-iframe rejection in embed extraction.
+- **Behavioural rules** — health auto-disable thresholds and announce-once semantics,
+  completion/resume thresholds, quality-ladder ranking, mirror preference ordering,
+  and the exact argument list handed to IINA.
+- **Shipped provider specs** are parsed in a test, so a malformed selector TOML cannot
+  be released.
+
+Planned (M6):
+- **Fixture tests.** Real HTML recorded into `tests/fixtures/` and asserted offline, so
+  scraper regressions are caught without touching the network. The directory exists;
+  the fixtures do not yet.
 - **`insta` snapshots** for parsed output, so selector changes surface as reviewable diffs.
 - **`wiremock`** for network-error paths (timeouts, 429, 503, Cloudflare pages).
-- **Live smoke tests** behind `--ignored`, run manually via `kuro provider test`. They are
-  never in CI — a red build caused by someone else's site going down is noise.
+
+Live checks run manually via `kuro provider test`, never in CI — a red build caused by
+someone else's site going down is noise.
 
 ### Observability
 `tracing` spans per provider call. `-vv` prints each URL fetched, status, timing, and the
@@ -620,16 +656,18 @@ exact selector that failed on `ParseFailure`.
 
 ## 13. Milestones
 
-| # | Deliverable | Scope |
-|---|---|---|
-| **M1** | Walking skeleton | Workspace, `Provider` trait, `luciferdonghua` search+episodes, `kuro search` printing results |
-| **M2** | Playback | Mirror extraction, `YtDlpResolver`, IINA launch, `kuro play` — **first watchable episode** |
-| **M3** | Provider system | Declarative selector loading, toggle commands, health tracking + auto-disable |
-| **M4** | State | History, resume via mpv IPC, bookmarks, `kuro continue` / `kuro next` |
-| **M5** | TUI | `ratatui` search/series/provider screens |
-| **M6** | Hardening | Second provider (proves the abstraction), fixture test suite, `kuro doctor`, Homebrew tap |
+| # | Deliverable | Scope | Status |
+|---|---|---|---|
+| **M1** | Walking skeleton | Workspace, `Provider` trait, `luciferdonghua` search+episodes, `kuro search` | ✅ done |
+| **M2** | Playback | Mirror extraction, `YtDlpResolver`, IINA launch, `kuro play` — **first watchable episode** | ✅ done |
+| **M3** | Provider system | Declarative selector loading, toggle commands, health tracking + auto-disable | ✅ done |
+| **M4** | State | History, resume via mpv IPC, bookmarks, `kuro continue` / `kuro next` | ✅ done |
+| **M5** | TUI | `ratatui` search/series/provider screens | ⬜ not started |
+| **M6** | Hardening | Second provider (proves the abstraction), fixture test suite, Homebrew tap | ◐ `kuro doctor` done; rest open |
 
 M2 is the point at which the tool is genuinely usable; everything after is leverage.
+
+Until M5 lands, bare `kuro` prints help rather than opening a TUI.
 
 ---
 
@@ -677,5 +715,21 @@ the toggle system exists in part to make that choice easy to revisit.
 | `yt-dlp` | ✅ installed — resolves Rumble and Dailymotion to full HLS ladders |
 | `mpv`, `ffmpeg` | ✅ installed |
 | `node`, `bun` | ✅ installed |
-| `cargo` / `rustc` | ❌ **not installed** — `rustup` required before M1 |
+| `cargo` / `rustc` | ✅ 1.97.1 — installed via `rustup` during M1 |
 | `luciferdonghua.in` | ✅ reachable, HTTP 200, full scrape chain verified |
+
+### Verified after implementation
+
+| Check | Result |
+|---|---|
+| `kuro provider test luciferdonghua` | ✅ reachable → search → episodes → mirrors → Rumble embed, all green |
+| `kuro play … --ep 15 --dry-run` | ✅ resolves to a signed Rumble CDN `chunklist.m3u8` |
+| Resolved stream decodes | ✅ `ffprobe` reports h264 1920×1080 + aac, 998 s |
+| mpv opens the stream | ✅ `Video (h264 1920x1080 30 fps)`, `Audio (aac 2ch 44100 Hz)` |
+| Test suite | ✅ 48 passing, 0 build warnings |
+
+> **Note on `ffprobe`:** it rejects Rumble's HLS segments by default because they carry
+> a `.tar` extension, which is not in ffmpeg's `allowed_segment_extensions` whitelist
+> (`-extension_picky 0` bypasses it). This was investigated as a possible playback
+> blocker and is **not** one — mpv, and therefore IINA, opens the same stream without
+> any extra option. No workaround is needed in the player arguments.
