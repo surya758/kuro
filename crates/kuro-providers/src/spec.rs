@@ -95,7 +95,20 @@ fn default_value_attr() -> String {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EmbedSelectors {
+    /// Iframe-based players. Checked first — this is the actual player element.
     pub iframe: String,
+    /// Optional fallback for players injected by JavaScript rather than an iframe.
+    /// Dailymotion mirrors expose only `<meta itemprop="embedUrl" content="…">`,
+    /// so without this those mirrors look dead to the scraper.
+    #[serde(default)]
+    pub meta: Option<String>,
+    /// Attribute holding the URL on `meta` matches.
+    #[serde(default = "default_meta_attr")]
+    pub meta_attr: String,
+}
+
+fn default_meta_attr() -> String {
+    "content".to_string()
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]

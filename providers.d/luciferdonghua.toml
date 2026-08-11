@@ -38,8 +38,11 @@ option     = "select.mirror option[value]"
 value_attr = "value"
 index_attr = "data-index"
 
+# Rumble mirrors use an iframe; Dailymotion mirrors mount their player from JS and
+# only advertise the URL through schema.org metadata.
 [selectors.embed]
 iframe = "iframe"
+meta   = "meta[itemprop=embedUrl]"
 
 [request]
 user_agent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"

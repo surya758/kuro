@@ -329,11 +329,16 @@ pub fn parse_mirrors(
 }
 
 /// Extract the video embed URL, skipping ad and tracker iframes.
+///
+/// Two sources are consulted. Iframes come first, being the actual player element.
+/// Some mirrors mount their player from JavaScript and expose the URL only through
+/// `<meta itemprop="embedUrl">` — without that fallback those mirrors are invisible
+/// to the scraper even though they play perfectly well.
 pub fn parse_embed(html: &str, sel: &EmbedSelectors, base: &Url) -> Result<Url, ProviderError> {
     let doc = Html::parse_document(html);
-    let iframe_sel = compile(&sel.iframe)?;
 
-    let mut seen_any = false;
+    let iframe_sel = compile(&sel.iframe)?;
+    let mut candidates_seen = false;
 
     for iframe in doc.select(&iframe_sel) {
         let Some(src) = ["src", "data-src", "data-litespeed-src"]
@@ -342,32 +347,58 @@ pub fn parse_embed(html: &str, sel: &EmbedSelectors, base: &Url) -> Result<Url, 
         else {
             continue;
         };
-        seen_any = true;
+        candidates_seen = true;
 
-        let Ok(url) = base.join(src.trim()) else {
-            continue;
-        };
-
-        if url.host_str().map(hosts::is_video_host).unwrap_or(false) {
+        if let Some(url) = video_url(src, base) {
             return Ok(url);
         }
     }
 
-    if seen_any {
-        // Iframes exist, but none was a known video host — either a new host needs
+    if let Some(meta_sel) = &sel.meta {
+        let meta_sel = compile(meta_sel)?;
+        for meta in doc.select(&meta_sel) {
+            let Some(raw) = meta.value().attr(&sel.meta_attr) else {
+                continue;
+            };
+            candidates_seen = true;
+
+            if let Some(url) = video_url(raw, base) {
+                return Ok(url);
+            }
+        }
+    }
+
+    if candidates_seen {
+        // Candidates exist but none was a known video host — either a new host needs
         // adding to the allowlist, or this mirror is dead and serving only ads.
         Err(ProviderError::parse(
             &sel.iframe,
-            "video embed (only non-video iframes found)",
+            "video embed (no candidate pointed at a known video host)",
         ))
     } else {
         Err(ProviderError::parse(&sel.iframe, "video embed"))
     }
 }
 
+/// Resolve a raw attribute value to an absolute URL, keeping it only if it points
+/// at a known video host.
+fn video_url(raw: &str, base: &Url) -> Option<Url> {
+    let url = base.join(raw.trim()).ok()?;
+    let is_video = url.host_str().map(hosts::is_video_host).unwrap_or(false);
+    is_video.then_some(url)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn embed_selectors() -> EmbedSelectors {
+        EmbedSelectors {
+            iframe: "iframe".to_string(),
+            meta: Some("meta[itemprop=embedUrl]".to_string()),
+            meta_attr: "content".to_string(),
+        }
+    }
 
     #[test]
     fn extracts_numbers_including_decimals() {
@@ -427,20 +458,41 @@ mod tests {
               <iframe src="https://sads.adsboosters.xyz/ad.html"></iframe>
               <iframe src="https://rumble.com/embed/v75qb3o/?pub=4p006u"></iframe>
             </div>"#;
-        let sel = EmbedSelectors {
-            iframe: "iframe".to_string(),
-        };
+        let sel = embed_selectors();
         let base = Url::parse("https://x.tld/").expect("valid url");
         let got = parse_embed(html, &sel, &base).expect("finds the video iframe");
         assert_eq!(got.host_str(), Some("rumble.com"));
     }
 
     #[test]
+    fn embed_extraction_falls_back_to_schema_org_metadata() {
+        // Dailymotion mirrors mount the player from JS; the only machine-readable
+        // pointer is this meta tag. Without it the mirror looks dead.
+        let html = r#"
+            <head>
+              <meta itemprop="embedUrl"
+                    content="https://geo.dailymotion.com/player/xbj0x.html?video=k79psBwTBNhHM2FndJg">
+            </head>
+            <body><iframe src="https://sads.adsboosters.xyz/ad.html"></iframe></body>"#;
+        let base = Url::parse("https://x.tld/").expect("valid url");
+        let got = parse_embed(html, &embed_selectors(), &base).expect("finds the meta embed");
+        assert_eq!(got.host_str(), Some("geo.dailymotion.com"));
+    }
+
+    #[test]
+    fn iframe_wins_over_metadata_when_both_are_present() {
+        let html = r#"
+            <head><meta itemprop="embedUrl" content="https://geo.dailymotion.com/player/x.html"></head>
+            <body><iframe src="https://rumble.com/embed/abc/"></iframe></body>"#;
+        let base = Url::parse("https://x.tld/").expect("valid url");
+        let got = parse_embed(html, &embed_selectors(), &base).expect("finds an embed");
+        assert_eq!(got.host_str(), Some("rumble.com"));
+    }
+
+    #[test]
     fn embed_extraction_reports_parse_failure_when_only_ads_present() {
         let html = r#"<iframe src="https://sads.adsboosters.xyz/ad.html"></iframe>"#;
-        let sel = EmbedSelectors {
-            iframe: "iframe".to_string(),
-        };
+        let sel = embed_selectors();
         let base = Url::parse("https://x.tld/").expect("valid url");
         assert!(matches!(
             parse_embed(html, &sel, &base),
