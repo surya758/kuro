@@ -118,6 +118,53 @@ impl YtDlpResolver {
         output.duration.map(|d| d as u64)
     }
 
+    /// Download rather than stream.
+    ///
+    /// The *embed* URL is handed to `yt-dlp`, not a resolved stream URL: yt-dlp
+    /// then picks formats and muxes video with audio itself, which a single
+    /// pre-resolved rendition cannot do.
+    ///
+    /// stdio is inherited so its progress bar reaches the terminal directly.
+    pub async fn download(
+        &self,
+        url: &Url,
+        pref: QualityPref,
+        output_template: &str,
+    ) -> Result<(), ResolveError> {
+        let format = format_selector(pref);
+        debug!(%url, %format, output_template, "invoking yt-dlp for download");
+
+        let status = tokio::process::Command::new(&self.binary)
+            .args([
+                "--no-warnings",
+                "--no-playlist",
+                "--newline",
+                "-f",
+                &format,
+                "-o",
+                output_template,
+                url.as_str(),
+            ])
+            .stdin(std::process::Stdio::null())
+            .status()
+            .await
+            .map_err(|e| {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    ResolveError::YtDlpMissing
+                } else {
+                    ResolveError::Io(e)
+                }
+            })?;
+
+        if !status.success() {
+            return Err(ResolveError::YtDlp(format!(
+                "yt-dlp exited with status {}",
+                status.code().unwrap_or(-1)
+            )));
+        }
+        Ok(())
+    }
+
     async fn run_json(&self, url: &Url) -> Result<YtDlpOutput, ResolveError> {
         debug!(%url, "invoking yt-dlp");
 
@@ -145,6 +192,22 @@ impl YtDlpResolver {
 
         serde_json::from_slice(&output.stdout)
             .map_err(|e| ResolveError::BadOutput(e.to_string()))
+    }
+}
+
+/// A yt-dlp format expression for the requested quality.
+///
+/// Each falls back to a pre-muxed stream (`/b`) because many of these hosts serve
+/// only combined renditions, where a strict `video+audio` selector matches nothing.
+fn format_selector(pref: QualityPref) -> String {
+    match pref.target_height() {
+        None => match pref {
+            QualityPref::Worst => "wv*+wa/w".to_string(),
+            _ => "bv*+ba/b".to_string(),
+        },
+        Some(h) => {
+            format!("bv*[height<={h}]+ba/b[height<={h}]/bv*+ba/b")
+        }
     }
 }
 
@@ -266,6 +329,31 @@ mod tests {
 
     fn heights(streams: &[Stream]) -> Vec<u32> {
         streams.iter().filter_map(|s| s.height).collect()
+    }
+
+    #[test]
+    fn format_selectors_always_fall_back_to_a_muxed_stream() {
+        // Hosts that only serve combined renditions would match nothing without
+        // the trailing `/b`, and the download would fail outright.
+        for pref in [
+            QualityPref::Best,
+            QualityPref::Worst,
+            QualityPref::P1080,
+            QualityPref::P360,
+        ] {
+            let sel = format_selector(pref);
+            let last = sel.rsplit('/').next().expect("non-empty selector");
+            assert!(
+                last == "b" || last == "w",
+                "{pref:?} must end in a pre-muxed fallback, got `{sel}`"
+            );
+        }
+    }
+
+    #[test]
+    fn specific_quality_selector_bounds_the_height() {
+        let sel = format_selector(QualityPref::P720);
+        assert!(sel.contains("height<=720"), "got `{sel}`");
     }
 
     #[test]

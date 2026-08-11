@@ -16,9 +16,9 @@ use tracing::{debug, warn};
 use url::Url;
 
 /// A mirror whose embed URL has been resolved and labelled by host.
-struct ResolvedMirror {
-    label: String,
-    embed: Url,
+pub struct ResolvedMirror {
+    pub label: String,
+    pub embed: Url,
 }
 
 /// Resolve every mirror's embed URL concurrently, discarding ones that fail.
@@ -72,10 +72,19 @@ pub struct PlayRequest<'a> {
     pub start_secs: Option<u64>,
 }
 
-pub async fn play(app: &mut App, req: PlayRequest<'_>) -> Result<()> {
-    let provider_id = req.provider.id();
+/// Resolve every mirror for an episode and return them best-first.
+///
+/// Shared by playback and downloading: both need the same "which host should we
+/// try, in what order" answer.
+pub async fn ordered_mirrors(
+    app: &mut App,
+    provider: &Arc<dyn Provider>,
+    episode: &Episode,
+    mirror_filter: Option<&str>,
+) -> Result<Vec<ResolvedMirror>> {
+    let provider_id = provider.id();
 
-    let mirrors = match req.provider.mirrors(&app.ctx, req.episode).await {
+    let mirrors = match provider.mirrors(&app.ctx, episode).await {
         Ok(m) => {
             app.note_success(&provider_id);
             m
@@ -93,7 +102,7 @@ pub async fn play(app: &mut App, req: PlayRequest<'_>) -> Result<()> {
 
     eprintln!("  found {} mirror(s), resolving…", mirrors.len());
 
-    let resolved = resolve_embeds(app, &req.provider, mirrors).await;
+    let resolved = resolve_embeds(app, provider, mirrors).await;
     if resolved.is_empty() {
         anyhow::bail!("no mirror on this episode exposed a usable video embed");
     }
@@ -101,7 +110,7 @@ pub async fn play(app: &mut App, req: PlayRequest<'_>) -> Result<()> {
     let preference = app.config.provider(provider_id.as_str()).mirrors;
     let mut ordered = order_by_preference(resolved, &preference);
 
-    if let Some(wanted) = &req.mirror {
+    if let Some(wanted) = mirror_filter {
         let wanted_lower = wanted.to_ascii_lowercase();
         let before = ordered.len();
         ordered.retain(|m| m.label.to_ascii_lowercase().contains(&wanted_lower));
@@ -111,6 +120,13 @@ pub async fn play(app: &mut App, req: PlayRequest<'_>) -> Result<()> {
             );
         }
     }
+
+    Ok(ordered)
+}
+
+pub async fn play(app: &mut App, req: PlayRequest<'_>) -> Result<()> {
+    let ordered =
+        ordered_mirrors(app, &req.provider, req.episode, req.mirror.as_deref()).await?;
 
     let mut failures = Vec::new();
 

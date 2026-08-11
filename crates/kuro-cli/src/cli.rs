@@ -64,6 +64,27 @@ pub enum Command {
         mirror: Option<String>,
     },
 
+    /// Download an episode instead of streaming it.
+    Download {
+        query: Vec<String>,
+
+        /// Episode number.
+        #[arg(long, short = 'e')]
+        ep: Option<f32>,
+
+        /// Download every episode of the series.
+        #[arg(long, conflicts_with = "ep")]
+        all: bool,
+
+        /// Prefer a specific embed host.
+        #[arg(long, short = 'm')]
+        mirror: Option<String>,
+
+        /// Directory to save into.
+        #[arg(long, short = 'o', default_value = ".")]
+        out: std::path::PathBuf,
+    },
+
     /// Play the next unwatched episode of the most recently watched series.
     Next,
 

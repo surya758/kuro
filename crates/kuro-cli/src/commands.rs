@@ -304,6 +304,110 @@ pub async fn play_cmd(
     .await
 }
 
+/// Strip characters that are awkward or illegal in filenames.
+fn safe_filename(s: &str) -> String {
+    let cleaned: String = s
+        .chars()
+        .map(|c| match c {
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '-',
+            // Control characters would produce unusable names.
+            c if c.is_control() => ' ',
+            c => c,
+        })
+        .collect();
+    cleaned.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+pub async fn download(
+    app: &mut App,
+    query: &[String],
+    ep: Option<f32>,
+    all: bool,
+    mirror: Option<String>,
+    out: &std::path::Path,
+) -> Result<()> {
+    let ytdlp = kuro_resolver::ytdlp::YtDlpResolver::default();
+    if !ytdlp.is_available().await {
+        anyhow::bail!("yt-dlp is required for downloads — install it with: brew install yt-dlp");
+    }
+
+    let query = joined(query);
+    let series = search_ranked(app, &query).await?;
+    let chosen = series
+        .first()
+        .with_context(|| format!("no results for `{query}`"))?
+        .clone();
+
+    eprintln!("→ {} [{}]", chosen.title, chosen.provider_id);
+
+    let provider = provider_for(app, &chosen)?;
+    let episodes = episodes_of(app, &provider, &chosen).await?;
+
+    let wanted: Vec<Episode> = if all {
+        episodes.clone()
+    } else {
+        let number = ep.context("give an episode with --ep N, or --all for the whole series")?;
+        vec![pick_episode(&episodes, number)?.clone()]
+    };
+
+    std::fs::create_dir_all(out)
+        .with_context(|| format!("creating output directory {}", out.display()))?;
+
+    let mut failed = Vec::new();
+
+    for (i, episode) in wanted.iter().enumerate() {
+        eprintln!(
+            "\n[{}/{}] Episode {}",
+            i + 1,
+            wanted.len(),
+            episode.number_label()
+        );
+
+        let mirrors =
+            match crate::playback::ordered_mirrors(app, &provider, episode, mirror.as_deref()).await
+            {
+                Ok(m) => m,
+                Err(e) => {
+                    eprintln!("  \x1b[31mskipped\x1b[0m: {e}");
+                    failed.push(episode.number_label());
+                    continue;
+                }
+            };
+
+        // `%(ext)s` is a yt-dlp placeholder — it fills in the real container.
+        let filename = format!(
+            "{} - E{}.%(ext)s",
+            safe_filename(&chosen.title),
+            episode.number_label()
+        );
+        let template = out.join(filename).display().to_string();
+
+        // Try each mirror in turn, exactly as playback does.
+        let mut saved = false;
+        for m in &mirrors {
+            eprintln!("  downloading from {} …", m.label);
+            match ytdlp.download(&m.embed, app.quality, &template).await {
+                Ok(()) => {
+                    saved = true;
+                    break;
+                }
+                Err(e) => eprintln!("  {} failed: {e}", m.label),
+            }
+        }
+
+        if !saved {
+            failed.push(episode.number_label());
+        }
+    }
+
+    if failed.is_empty() {
+        eprintln!("\n\x1b[32mDone.\x1b[0m Saved to {}", out.display());
+        Ok(())
+    } else {
+        anyhow::bail!("could not download episode(s): {}", failed.join(", "))
+    }
+}
+
 pub async fn next(app: &mut App) -> Result<()> {
     let history = app.history()?;
     let entry = history
@@ -711,6 +815,38 @@ pub fn cache_cmd(app: &App, action: &CacheAction) -> Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn filenames_drop_path_separators_and_reserved_characters() {
+        // A title containing `/` would otherwise write outside the output directory.
+        assert_eq!(safe_filename("Wu Dong / Qian Kun"), "Wu Dong - Qian Kun");
+        assert_eq!(safe_filename("What: A Title?"), "What- A Title-");
+        assert_eq!(safe_filename("a\\b*c\"d<e>f|g"), "a-b-c-d-e-f-g");
+    }
+
+    #[test]
+    fn filenames_collapse_whitespace() {
+        assert_eq!(safe_filename("  Spaced   Out  "), "Spaced Out");
+        assert_eq!(safe_filename("tab\there"), "tab here");
+    }
+
+    #[test]
+    fn non_ascii_titles_are_preserved() {
+        // Donghua titles are routinely CJK; mangling them would be worse than useless.
+        assert_eq!(safe_filename("斗罗大陆"), "斗罗大陆");
+    }
+
+    #[test]
+    fn durations_render_as_clock_time() {
+        assert_eq!(format_hms(0), "0:00");
+        assert_eq!(format_hms(612), "10:12");
+        assert_eq!(format_hms(3661), "1:01:01");
+    }
 }
 
 pub async fn doctor(app: &mut App) -> Result<()> {

@@ -69,6 +69,13 @@ async fn run(cli: Cli) -> Result<()> {
         Some(Command::Play { query, ep, mirror }) => {
             commands::play_cmd(&mut app, query, *ep, mirror.clone()).await
         }
+        Some(Command::Download {
+            query,
+            ep,
+            all,
+            mirror,
+            out,
+        }) => commands::download(&mut app, query, *ep, *all, mirror.clone(), out).await,
         Some(Command::Next) => commands::next(&mut app).await,
         Some(Command::Continue) => commands::continue_watching(&mut app).await,
         Some(Command::List { limit }) => commands::list(&app, *limit),
