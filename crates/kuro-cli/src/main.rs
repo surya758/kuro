@@ -55,7 +55,13 @@ async fn run(cli: Cli) -> Result<()> {
         return Ok(());
     }
 
-    let mut app = App::new(cli.provider, cli.quality, cli.json, cli.dry_run)?;
+    let mut app = App::new(
+        cli.provider,
+        cli.quality,
+        cli.json,
+        cli.dry_run,
+        cli.no_cache,
+    )?;
 
     match &cli.command {
         Some(Command::Search { query }) => commands::search(&mut app, query).await,
@@ -69,6 +75,7 @@ async fn run(cli: Cli) -> Result<()> {
         Some(Command::Bookmark { action }) => commands::bookmark(&mut app, action).await,
         Some(Command::Provider { action }) => commands::provider_cmd(&mut app, action).await,
         Some(Command::Config { action }) => commands::config_cmd(&app, action),
+        Some(Command::Cache { action }) => commands::cache_cmd(&app, action),
         Some(Command::Doctor) => commands::doctor(&mut app).await,
         Some(Command::Completions { .. }) => unreachable!("handled above"),
 

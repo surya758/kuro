@@ -4,7 +4,9 @@
 //! [`FetchCtx`] is what makes timeouts, retries, politeness delays and the shared
 //! cookie jar uniform across scrapers.
 
+use crate::cache::HttpCache;
 use crate::error::ProviderError;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::Semaphore;
@@ -22,6 +24,8 @@ pub struct FetchConfig {
     pub per_host_concurrency: usize,
     /// Politeness delay applied between retries, doubled on each attempt.
     pub retry_backoff: Duration,
+    /// Where to cache responses. `None` disables caching.
+    pub cache_dir: Option<PathBuf>,
 }
 
 impl Default for FetchConfig {
@@ -31,6 +35,7 @@ impl Default for FetchConfig {
             max_retries: 2,
             per_host_concurrency: 4,
             retry_backoff: Duration::from_millis(400),
+            cache_dir: None,
         }
     }
 }
@@ -40,6 +45,7 @@ pub struct FetchCtx {
     client: reqwest::Client,
     config: FetchConfig,
     permits: Arc<Semaphore>,
+    cache: HttpCache,
 }
 
 impl FetchCtx {
@@ -54,15 +60,44 @@ impl FetchCtx {
             .build()?;
 
         let permits = Arc::new(Semaphore::new(config.per_host_concurrency));
+        let cache = HttpCache::new(config.cache_dir.clone());
+
         Ok(Self {
             client,
             config,
             permits,
+            cache,
         })
     }
 
     pub fn config(&self) -> &FetchConfig {
         &self.config
+    }
+
+    pub fn cache(&self) -> &HttpCache {
+        &self.cache
+    }
+
+    /// GET with caching. A fresh cached body short-circuits the request entirely.
+    ///
+    /// Only successful responses are cached — an error would otherwise be replayed
+    /// for the whole TTL, turning a blip into a persistent outage.
+    pub async fn get_cached(
+        &self,
+        url: &Url,
+        referer: Option<&str>,
+        user_agent: Option<&str>,
+        ttl: Duration,
+    ) -> Result<String, ProviderError> {
+        let key = url.as_str();
+
+        if let Some(body) = self.cache.get(key) {
+            return Ok(body);
+        }
+
+        let body = self.get_text_with_ua(url, referer, user_agent).await?;
+        self.cache.put(key, &body, ttl);
+        Ok(body)
     }
 
     /// GET a URL and return the body as text, with retry on transient failures.

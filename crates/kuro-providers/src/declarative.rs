@@ -7,9 +7,11 @@
 use crate::parse;
 use crate::spec::ProviderSpec;
 use async_trait::async_trait;
+use kuro_core::cache::ttl;
 use kuro_core::{
     Episode, FetchCtx, Mirror, Provider, ProviderError, ProviderId, Series, SeriesDetails,
 };
+use std::time::Duration;
 use tracing::debug;
 use url::Url;
 
@@ -46,8 +48,19 @@ impl DeclarativeProvider {
         self.spec.request.user_agent.as_deref()
     }
 
+    /// Uncached fetch, for liveness probes that must reflect the site right now.
     async fn get(&self, ctx: &FetchCtx, url: &Url) -> Result<String, ProviderError> {
         ctx.get_text_with_ua(url, self.referer(), self.user_agent())
+            .await
+    }
+
+    async fn get_cached(
+        &self,
+        ctx: &FetchCtx,
+        url: &Url,
+        ttl: Duration,
+    ) -> Result<String, ProviderError> {
+        ctx.get_cached(url, self.referer(), self.user_agent(), ttl)
             .await
     }
 
@@ -80,7 +93,7 @@ impl Provider for DeclarativeProvider {
 
     async fn search(&self, ctx: &FetchCtx, query: &str) -> Result<Vec<Series>, ProviderError> {
         let url = self.search_url(query)?;
-        let html = self.get(ctx, &url).await?;
+        let html = self.get_cached(ctx, &url, ttl::SEARCH).await?;
         parse::parse_search(&html, &self.spec.selectors.search, &self.base_url, &self.id)
     }
 
@@ -89,7 +102,7 @@ impl Provider for DeclarativeProvider {
         ctx: &FetchCtx,
         series: &Series,
     ) -> Result<SeriesDetails, ProviderError> {
-        let html = self.get(ctx, &series.url).await?;
+        let html = self.get_cached(ctx, &series.url, ttl::EPISODES).await?;
         parse::parse_series_details(&html, &self.spec.selectors.series)
     }
 
@@ -98,7 +111,7 @@ impl Provider for DeclarativeProvider {
         ctx: &FetchCtx,
         series: &Series,
     ) -> Result<Vec<Episode>, ProviderError> {
-        let html = self.get(ctx, &series.url).await?;
+        let html = self.get_cached(ctx, &series.url, ttl::EPISODES).await?;
         parse::parse_episodes(
             &html,
             &self.spec.selectors.episodes,
@@ -112,7 +125,7 @@ impl Provider for DeclarativeProvider {
         ctx: &FetchCtx,
         episode: &Episode,
     ) -> Result<Vec<Mirror>, ProviderError> {
-        let html = self.get(ctx, &episode.url).await?;
+        let html = self.get_cached(ctx, &episode.url, ttl::MIRRORS).await?;
         parse::parse_mirrors(
             &html,
             &self.spec.selectors.mirrors,
@@ -128,7 +141,7 @@ impl Provider for DeclarativeProvider {
         }
 
         debug!(provider = %self.id, mirror = mirror.index, url = %mirror.page_url, "resolving embed");
-        let html = self.get(ctx, &mirror.page_url).await?;
+        let html = self.get_cached(ctx, &mirror.page_url, ttl::MIRRORS).await?;
         parse::parse_embed(&html, &self.spec.selectors.embed, &self.base_url)
     }
 }

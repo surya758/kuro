@@ -1,7 +1,7 @@
 //! Command implementations.
 
 use crate::app::App;
-use crate::cli::{BookmarkAction, ConfigAction, ProviderAction};
+use crate::cli::{BookmarkAction, CacheAction, ConfigAction, ProviderAction};
 use crate::playback::{play, PlayRequest};
 use anyhow::{Context, Result};
 use kuro_core::{orchestrator, Episode, Provider, Series, SeriesStatus};
@@ -680,6 +680,34 @@ pub fn config_cmd(app: &App, action: &ConfigAction) -> Result<()> {
             }
             config.save(&app.paths)?;
             println!("Wrote {}.", path.display());
+        }
+    }
+    Ok(())
+}
+
+pub fn cache_cmd(app: &App, action: &CacheAction) -> Result<()> {
+    let cache = app.ctx.cache();
+
+    match action {
+        CacheAction::Status => {
+            println!("path     {}", app.paths.cache_dir().display());
+            println!(
+                "state    {}",
+                if cache.is_enabled() {
+                    "enabled"
+                } else {
+                    "disabled for this run"
+                }
+            );
+            println!("entries  {}", cache.len());
+        }
+
+        CacheAction::Clear => {
+            // Clear works even when caching is off for this run, so `--no-cache`
+            // doesn't make the cache impossible to empty.
+            let dir = app.paths.cache_dir();
+            let removed = kuro_core::HttpCache::new(Some(dir)).clear()?;
+            println!("Removed {removed} cached page(s).");
         }
     }
     Ok(())

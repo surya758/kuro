@@ -27,6 +27,9 @@ pub struct General {
     pub search_timeout: Duration,
     #[serde(with = "humantime_serde")]
     pub request_timeout: Duration,
+    /// Cache scraped pages on disk between commands. `--no-cache` overrides this
+    /// for a single run.
+    pub cache: bool,
 }
 
 impl Default for General {
@@ -36,6 +39,7 @@ impl Default for General {
             concurrency: 6,
             search_timeout: Duration::from_secs(8),
             request_timeout: Duration::from_secs(15),
+            cache: true,
         }
     }
 }

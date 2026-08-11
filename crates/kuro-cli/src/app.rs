@@ -27,6 +27,7 @@ impl App {
         quality_override: Option<QualityPref>,
         json: bool,
         dry_run: bool,
+        no_cache: bool,
     ) -> Result<Self> {
         let paths = Paths::discover().context("locating config directory")?;
         paths.ensure_dirs().context("creating config directories")?;
@@ -35,8 +36,10 @@ impl App {
         let health = HealthStore::load(&paths).context("loading provider health")?;
         let registry = Registry::load(Some(&paths.user_providers_dir()));
 
+        let caching_on = config.general.cache && !no_cache;
         let ctx = FetchCtx::new(FetchConfig {
             timeout: config.general.request_timeout,
+            cache_dir: caching_on.then(|| paths.cache_dir()),
             ..FetchConfig::default()
         })
         .context("building HTTP client")?;

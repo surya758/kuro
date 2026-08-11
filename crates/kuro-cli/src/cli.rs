@@ -30,6 +30,10 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub dry_run: bool,
 
+    /// Bypass the page cache for this run.
+    #[arg(long, global = true)]
+    pub no_cache: bool,
+
     /// Increase log verbosity (-v info, -vv debug, -vvv trace).
     #[arg(long, short, global = true, action = clap::ArgAction::Count)]
     pub verbose: u8,
@@ -92,6 +96,12 @@ pub enum Command {
         action: ConfigAction,
     },
 
+    /// Inspect or clear the page cache.
+    Cache {
+        #[command(subcommand)]
+        action: CacheAction,
+    },
+
     /// Check the environment: player, yt-dlp, provider health.
     Doctor,
 
@@ -120,6 +130,14 @@ pub enum ProviderAction {
     Test { id: String },
     /// Re-read selector TOMLs and report what loaded.
     Reload,
+}
+
+#[derive(Subcommand, Debug)]
+pub enum CacheAction {
+    /// Show where the cache lives and how many entries it holds.
+    Status,
+    /// Delete every cached page.
+    Clear,
 }
 
 #[derive(Subcommand, Debug)]
