@@ -88,7 +88,8 @@ This is neutralised by design rather than dismissed. `kuro` splits scraper logic
   Rust code.
 
 With that escape hatch in place, the iteration-speed gap closes, and Rust's advantages —
-one ~8 MB binary with no runtime, `cargo` as a first-class build system, memory safety
+one small binary with no runtime (3.7 MB as built), `cargo` as a first-class build
+system, memory safety
 against hostile input, and a strict type system that makes provider failures
 *unignorable* — carry the decision.
 
