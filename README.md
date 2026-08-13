@@ -23,22 +23,55 @@ $ kuro play "martial god asura season 2" --ep 15
 ## Install
 
 ```sh
-brew install --cask iina                  # the player
-brew install yt-dlp                       # stream resolution and downloads
+brew tap surya758/tap
+brew trust surya758/tap     # Homebrew 6+ requires this for third-party taps
+brew install kuro
 
-cargo install --path crates/kuro-cli      # installs `kuro` to ~/.cargo/bin
-kuro doctor                               # verify everything is wired up
+brew install --cask iina    # the player
+kuro doctor                 # verify everything is wired up
 ```
 
-Or via Homebrew, once the repo and its tap are published:
+`yt-dlp` comes in as a dependency. Homebrew also installs shell completions.
+
+<details>
+<summary>Building from source instead</summary>
 
 ```sh
-brew tap surya758/tap
-brew install kuro
+brew install --cask iina
+brew install yt-dlp
+
+git clone https://github.com/surya758/kuro && cd kuro
+cargo install --path crates/kuro-cli      # installs `kuro` to ~/.cargo/bin
+kuro completions zsh > ~/.zfunc/_kuro     # bash, fish, elvish, powershell too
 ```
 
-Needs Rust 1.75+ and macOS. `kuro completions zsh > ~/.zfunc/_kuro` for tab
-completion (`bash`, `fish`, `elvish`, `powershell` also supported).
+Needs Rust 1.75+.
+
+</details>
+
+<details>
+<summary>Uninstalling</summary>
+
+```sh
+brew uninstall kuro
+brew untap surya758/tap
+```
+
+Or, if you built from source, `cargo uninstall kuro-cli`.
+
+Either way, config and history live outside the binary. To remove those too:
+
+```sh
+rm -rf ~/Library/Application\ Support/kuro   # config, history, bookmarks, health
+rm -rf ~/Library/Caches/kuro                 # cached pages
+```
+
+`kuro cache clear` empties just the cache and `kuro list --clear` just the watch
+history, if you would rather keep the rest.
+
+</details>
+
+macOS only.
 
 ## Usage
 
