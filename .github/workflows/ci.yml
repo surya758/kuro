@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  RUSTFLAGS: -D warnings
+
+jobs:
+  check:
+    # macOS is the only supported target, so build and test where it ships.
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        run: rustup toolchain install stable --profile minimal --component rustfmt,clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Formatting
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --all-targets --all-features
+
+      - name: Tests
+        # Every test is offline — scrapers run against recorded HTML in
+        # tests/fixtures, so CI never depends on a provider site being up.
+        run: cargo test --all-features
+
+      - name: Build release
+        run: cargo build --release
+
+      - name: Smoke test the binary
+        run: |
+          ./target/release/kuro --version
+          ./target/release/kuro provider list
+          ./target/release/kuro completions zsh > /dev/null

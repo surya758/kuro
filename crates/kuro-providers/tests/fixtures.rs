@@ -8,9 +8,9 @@
 //! When the site redesigns, these tests are *expected* to fail. That failure is the
 //! signal to re-record and update `providers.d/luciferdonghua.toml`.
 
+use kuro_core::ProviderId;
 use kuro_providers::parse;
 use kuro_providers::spec::ProviderSpec;
-use kuro_core::ProviderId;
 use url::Url;
 
 const SPEC_TOML: &str = include_str!("../../../providers.d/luciferdonghua.toml");
@@ -53,7 +53,9 @@ fn search_page_yields_every_result() {
     }
 
     assert!(
-        series.iter().all(|s| s.title.to_lowercase().contains("martial")),
+        series
+            .iter()
+            .all(|s| s.title.to_lowercase().contains("martial")),
         "the recorded query was `martial`"
     );
 }
@@ -98,7 +100,9 @@ fn series_page_yields_a_sorted_episode_list() {
     assert_eq!(numbers, sorted, "episodes are returned in ascending order");
 
     assert!(
-        episodes.iter().any(|e| (e.number - 15.0).abs() < f32::EPSILON),
+        episodes
+            .iter()
+            .any(|e| (e.number - 15.0).abs() < f32::EPSILON),
         "episode 15 is present"
     );
 
@@ -148,9 +152,10 @@ fn series_page_yields_metadata() {
 #[test]
 fn episode_page_yields_all_mirrors() {
     let spec = spec();
-    let episode_url =
-        Url::parse("https://luciferdonghua.in/martial-god-asura-season-2-episode-15-lucifer-donghua/")
-            .expect("valid episode url");
+    let episode_url = Url::parse(
+        "https://luciferdonghua.in/martial-god-asura-season-2-episode-15-lucifer-donghua/",
+    )
+    .expect("valid episode url");
     let mirrors = parse::parse_mirrors(
         EPISODE_HTML,
         &spec.selectors.mirrors,

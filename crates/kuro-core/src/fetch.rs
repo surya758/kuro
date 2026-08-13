@@ -101,7 +101,11 @@ impl FetchCtx {
     }
 
     /// GET a URL and return the body as text, with retry on transient failures.
-    pub async fn get_text(&self, url: &Url, referer: Option<&str>) -> Result<String, ProviderError> {
+    pub async fn get_text(
+        &self,
+        url: &Url,
+        referer: Option<&str>,
+    ) -> Result<String, ProviderError> {
         self.get_text_with_ua(url, referer, None).await
     }
 

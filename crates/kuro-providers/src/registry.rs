@@ -125,7 +125,10 @@ impl Registry {
     }
 
     pub fn is_user_override(&self, id: &str) -> bool {
-        self.providers.get(id).map(|l| l.from_user_dir).unwrap_or(false)
+        self.providers
+            .get(id)
+            .map(|l| l.from_user_dir)
+            .unwrap_or(false)
     }
 
     pub fn ids(&self) -> impl Iterator<Item = &str> {
@@ -160,9 +163,7 @@ pub fn validate_builtins() -> Result<usize, (String, ProviderError)> {
                     ProviderError::Config(format!("invalid spec: {e}")),
                 )
             })
-            .and_then(|spec| {
-                DeclarativeProvider::new(spec).map_err(|e| ((*id).to_string(), e))
-            })?;
+            .and_then(|spec| DeclarativeProvider::new(spec).map_err(|e| ((*id).to_string(), e)))?;
     }
     Ok(BUILTIN_SPECS.len())
 }
@@ -174,7 +175,10 @@ mod tests {
     #[test]
     fn every_shipped_spec_parses() {
         let count = validate_builtins().expect("all built-in specs must be valid");
-        assert!(count > 0, "at least one provider should ship with the binary");
+        assert!(
+            count > 0,
+            "at least one provider should ship with the binary"
+        );
     }
 
     #[test]

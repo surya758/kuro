@@ -54,8 +54,7 @@ impl History {
     }
 
     pub fn save(&self, paths: &Paths) -> Result<(), StoreError> {
-        let text =
-            serde_json::to_string_pretty(self).expect("History is always serialisable");
+        let text = serde_json::to_string_pretty(self).expect("History is always serialisable");
         write_atomic(&paths.history_file(), &text)
     }
 
@@ -124,12 +123,7 @@ impl History {
 
     /// Resume position for an episode, or `None` if it was never started or is
     /// already finished (replaying a completed episode should start from zero).
-    pub fn resume_position(
-        &self,
-        provider_id: &str,
-        series_id: &str,
-        episode: f32,
-    ) -> Option<u64> {
+    pub fn resume_position(&self, provider_id: &str, series_id: &str, episode: f32) -> Option<u64> {
         let entry = self.find(provider_id, series_id, episode)?;
         if entry.completed || entry.position_secs == 0 {
             None
@@ -167,8 +161,7 @@ impl Bookmarks {
     }
 
     pub fn save(&self, paths: &Paths) -> Result<(), StoreError> {
-        let text =
-            serde_json::to_string_pretty(self).expect("Bookmarks are always serialisable");
+        let text = serde_json::to_string_pretty(self).expect("Bookmarks are always serialisable");
         write_atomic(&paths.bookmarks_file(), &text)
     }
 

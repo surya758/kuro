@@ -8,7 +8,9 @@ use crate::app::App;
 use crate::playback::{play, PlayRequest};
 use anyhow::Result;
 use crossterm::event::{Event, EventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
-use crossterm::terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen};
+use crossterm::terminal::{
+    disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen,
+};
 use futures::StreamExt;
 use kuro_core::{orchestrator, Episode, Provider, ProviderId, Series};
 use ratatui::backend::CrosstermBackend;
@@ -206,9 +208,9 @@ async fn launch(app: &mut App, series: &Series, episode: &Episode) -> Result<()>
         .provider(series.provider_id.as_str())
         .ok_or_else(|| anyhow::anyhow!("provider `{}` is not loaded", series.provider_id))?;
 
-    let start = app
-        .history()?
-        .resume_position(series.provider_id.as_str(), &series.id, episode.number);
+    let start =
+        app.history()?
+            .resume_position(series.provider_id.as_str(), &series.id, episode.number);
 
     play(
         app,
@@ -329,8 +331,7 @@ fn handle_msg(app: &mut App, ui: &mut Ui, msg: Msg) {
                         (n, 0) => format!("{n} result(s)."),
                         (n, f) => format!("{n} result(s), {f} provider(s) failed."),
                     };
-                    ui.results_state
-                        .select((!series.is_empty()).then_some(0));
+                    ui.results_state.select((!series.is_empty()).then_some(0));
                     ui.results = series;
                     ui.editing = false;
                 }
@@ -346,8 +347,7 @@ fn handle_msg(app: &mut App, ui: &mut Ui, msg: Msg) {
                 .as_ref()
                 .and_then(|s| {
                     let history = app.history().ok()?;
-                    let last =
-                        history.last_completed_episode(s.provider_id.as_str(), &s.id)?;
+                    let last = history.last_completed_episode(s.provider_id.as_str(), &s.id)?;
                     episodes.iter().position(|e| e.number > last)
                 })
                 .unwrap_or(0);
@@ -626,7 +626,10 @@ fn draw_providers(f: &mut Frame, ui: &mut Ui, area: Rect) {
             let mut spans = vec![
                 Span::styled(format!("{mark} "), style),
                 Span::raw(format!("{:<20}", p.display_name)),
-                Span::styled(format!("{:<18}", p.id), Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    format!("{:<18}", p.id),
+                    Style::default().fg(Color::DarkGray),
+                ),
             ];
 
             if let Some(err) = &p.last_error {
@@ -654,8 +657,8 @@ fn draw_providers(f: &mut Frame, ui: &mut Ui, area: Rect) {
 
 fn draw_status(f: &mut Frame, ui: &Ui, area: Rect) {
     let prefix = if ui.busy { "… " } else { "" };
-    let widget = Paragraph::new(format!(" {prefix}{}", ui.status))
-        .style(Style::default().fg(Color::Gray));
+    let widget =
+        Paragraph::new(format!(" {prefix}{}", ui.status)).style(Style::default().fg(Color::Gray));
     f.render_widget(widget, area);
 }
 

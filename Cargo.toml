@@ -14,7 +14,7 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.75"
 license = "MIT"
-repository = "https://github.com/suryakant/kuro"
+repository = "https://github.com/surya758/kuro"
 
 [workspace.dependencies]
 kuro-core = { path = "crates/kuro-core" }

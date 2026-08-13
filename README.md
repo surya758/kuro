@@ -33,7 +33,7 @@ kuro doctor                               # verify everything is wired up
 Or via Homebrew, once the repo and its tap are published:
 
 ```sh
-brew tap suryakant/tap
+brew tap surya758/tap
 brew install kuro
 ```
 

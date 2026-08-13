@@ -190,8 +190,7 @@ impl YtDlpResolver {
             return Err(ResolveError::YtDlp(message));
         }
 
-        serde_json::from_slice(&output.stdout)
-            .map_err(|e| ResolveError::BadOutput(e.to_string()))
+        serde_json::from_slice(&output.stdout).map_err(|e| ResolveError::BadOutput(e.to_string()))
     }
 }
 
@@ -358,13 +357,19 @@ mod tests {
 
     #[test]
     fn best_prefers_the_highest_rendition() {
-        let ranked = rank_formats(vec![stream(720), stream(2160), stream(1080)], QualityPref::Best);
+        let ranked = rank_formats(
+            vec![stream(720), stream(2160), stream(1080)],
+            QualityPref::Best,
+        );
         assert_eq!(heights(&ranked)[0], 2160);
     }
 
     #[test]
     fn worst_prefers_the_lowest_rendition() {
-        let ranked = rank_formats(vec![stream(720), stream(2160), stream(360)], QualityPref::Worst);
+        let ranked = rank_formats(
+            vec![stream(720), stream(2160), stream(360)],
+            QualityPref::Worst,
+        );
         assert_eq!(heights(&ranked)[0], 360);
     }
 

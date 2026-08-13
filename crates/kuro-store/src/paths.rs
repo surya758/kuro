@@ -94,10 +94,7 @@ pub fn write_atomic(path: &std::path::Path, contents: &str) -> Result<(), StoreE
         })?;
     }
 
-    let tmp = path.with_extension(format!(
-        "tmp{}",
-        std::process::id()
-    ));
+    let tmp = path.with_extension(format!("tmp{}", std::process::id()));
 
     std::fs::write(&tmp, contents).map_err(|source| StoreError::Io {
         path: tmp.clone(),

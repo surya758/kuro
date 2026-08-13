@@ -81,14 +81,17 @@ fn pick_result(app: &App, results: &[Series], query: &str) -> Result<Series> {
                 .checked_sub(1)
                 .context("--select-nth is 1-based; 0 is not a result")?;
             results.get(index).cloned().with_context(|| {
-                format!("--select-nth {n} is out of range ({} result(s))", results.len())
+                format!(
+                    "--select-nth {n} is out of range ({} result(s))",
+                    results.len()
+                )
             })
         }
     }
 }
 
 /// Episodes selected by a spec, erroring with the available range when empty.
-fn episodes_for_spec<'a>(episodes: &'a [Episode], spec: EpisodeSpec) -> Result<Vec<&'a Episode>> {
+fn episodes_for_spec(episodes: &[Episode], spec: EpisodeSpec) -> Result<Vec<&Episode>> {
     let picked: Vec<&Episode> = episodes
         .iter()
         .filter(|e| !spec.select(&[e.number]).is_empty())
@@ -269,9 +272,9 @@ pub async fn watch(app: &mut App, query: &[String]) -> Result<()> {
     let ep_choice = prompt_index("Episode", episodes.len())?;
     let episode = &episodes[ep_choice];
 
-    let start = app
-        .history()?
-        .resume_position(chosen.provider_id.as_str(), &chosen.id, episode.number);
+    let start =
+        app.history()?
+            .resume_position(chosen.provider_id.as_str(), &chosen.id, episode.number);
 
     play(
         app,
@@ -337,9 +340,9 @@ pub async fn play_cmd(
             );
         }
 
-        let start = app
-            .history()?
-            .resume_position(chosen.provider_id.as_str(), &chosen.id, episode.number);
+        let start =
+            app.history()?
+                .resume_position(chosen.provider_id.as_str(), &chosen.id, episode.number);
 
         play(
             app,
@@ -418,16 +421,21 @@ pub async fn download(
             episode.number_label()
         );
 
-        let mirrors =
-            match crate::playback::ordered_mirrors(app, &provider, episode, mirror.as_deref()).await
-            {
-                Ok(m) => m,
-                Err(e) => {
-                    eprintln!("  \x1b[31mskipped\x1b[0m: {e}");
-                    failed.push(episode.number_label());
-                    continue;
-                }
-            };
+        let mirrors = match crate::playback::ordered_mirrors(
+            app,
+            &provider,
+            episode,
+            mirror.as_deref(),
+        )
+        .await
+        {
+            Ok(m) => m,
+            Err(e) => {
+                eprintln!("  \x1b[31mskipped\x1b[0m: {e}");
+                failed.push(episode.number_label());
+                continue;
+            }
+        };
 
         // `%(ext)s` is a yt-dlp placeholder — it fills in the real container.
         let filename = format!(
@@ -559,7 +567,10 @@ pub fn list(app: &App, limit: usize, clear: bool) -> Result<()> {
         let count = history.entries.len();
         history.entries.clear();
         history.save(&app.paths).context("clearing watch history")?;
-        println!("Cleared {count} history entr{}.", if count == 1 { "y" } else { "ies" });
+        println!(
+            "Cleared {count} history entr{}.",
+            if count == 1 { "y" } else { "ies" }
+        );
         return Ok(());
     }
 
@@ -601,7 +612,10 @@ pub async fn bookmark(app: &mut App, action: &BookmarkAction) -> Result<()> {
                 println!("No bookmarks.");
             } else {
                 for b in &bookmarks.entries {
-                    println!("{}  \x1b[2m[{}] {}\x1b[0m", b.series_title, b.provider_id, b.series_id);
+                    println!(
+                        "{}  \x1b[2m[{}] {}\x1b[0m",
+                        b.series_title, b.provider_id, b.series_id
+                    );
                 }
             }
         }
@@ -753,7 +767,10 @@ async fn test_provider(app: &mut App, id: &str) -> Result<()> {
     println!("Testing {id} ({})…\n", provider.base_url());
 
     let step = |label: &str, elapsed: std::time::Duration, detail: String| {
-        println!("  \x1b[32m✓\x1b[0m {label:<12} {:>6} ms  {detail}", elapsed.as_millis());
+        println!(
+            "  \x1b[32m✓\x1b[0m {label:<12} {:>6} ms  {detail}",
+            elapsed.as_millis()
+        );
     };
 
     let t = Instant::now();
@@ -768,7 +785,11 @@ async fn test_provider(app: &mut App, id: &str) -> Result<()> {
         .search(&app.ctx, "a")
         .await
         .map_err(|e| anyhow::anyhow!("search failed: {e}"))?;
-    step("search", t.elapsed(), format!("{} result(s)", results.len()));
+    step(
+        "search",
+        t.elapsed(),
+        format!("{} result(s)", results.len()),
+    );
 
     let Some(series) = results.first() else {
         println!("\n  search returned nothing — cannot test deeper.");
@@ -796,7 +817,11 @@ async fn test_provider(app: &mut App, id: &str) -> Result<()> {
         .mirrors(&app.ctx, episode)
         .await
         .map_err(|e| anyhow::anyhow!("mirror list failed: {e}"))?;
-    step("mirrors", t.elapsed(), format!("{} mirror(s)", mirrors.len()));
+    step(
+        "mirrors",
+        t.elapsed(),
+        format!("{} mirror(s)", mirrors.len()),
+    );
 
     let t = Instant::now();
     let mut embeds = Vec::new();
@@ -880,38 +905,6 @@ pub fn cache_cmd(app: &App, action: &CacheAction) -> Result<()> {
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn filenames_drop_path_separators_and_reserved_characters() {
-        // A title containing `/` would otherwise write outside the output directory.
-        assert_eq!(safe_filename("Wu Dong / Qian Kun"), "Wu Dong - Qian Kun");
-        assert_eq!(safe_filename("What: A Title?"), "What- A Title-");
-        assert_eq!(safe_filename("a\\b*c\"d<e>f|g"), "a-b-c-d-e-f-g");
-    }
-
-    #[test]
-    fn filenames_collapse_whitespace() {
-        assert_eq!(safe_filename("  Spaced   Out  "), "Spaced Out");
-        assert_eq!(safe_filename("tab\there"), "tab here");
-    }
-
-    #[test]
-    fn non_ascii_titles_are_preserved() {
-        // Donghua titles are routinely CJK; mangling them would be worse than useless.
-        assert_eq!(safe_filename("斗罗大陆"), "斗罗大陆");
-    }
-
-    #[test]
-    fn durations_render_as_clock_time() {
-        assert_eq!(format_hms(0), "0:00");
-        assert_eq!(format_hms(612), "10:12");
-        assert_eq!(format_hms(3661), "1:01:01");
-    }
-}
-
 pub async fn doctor(app: &mut App) -> Result<()> {
     println!("kuro doctor\n");
 
@@ -952,4 +945,36 @@ pub async fn doctor(app: &mut App) -> Result<()> {
     }
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn filenames_drop_path_separators_and_reserved_characters() {
+        // A title containing `/` would otherwise write outside the output directory.
+        assert_eq!(safe_filename("Wu Dong / Qian Kun"), "Wu Dong - Qian Kun");
+        assert_eq!(safe_filename("What: A Title?"), "What- A Title-");
+        assert_eq!(safe_filename("a\\b*c\"d<e>f|g"), "a-b-c-d-e-f-g");
+    }
+
+    #[test]
+    fn filenames_collapse_whitespace() {
+        assert_eq!(safe_filename("  Spaced   Out  "), "Spaced Out");
+        assert_eq!(safe_filename("tab\there"), "tab here");
+    }
+
+    #[test]
+    fn non_ascii_titles_are_preserved() {
+        // Donghua titles are routinely CJK; mangling them would be worse than useless.
+        assert_eq!(safe_filename("斗罗大陆"), "斗罗大陆");
+    }
+
+    #[test]
+    fn durations_render_as_clock_time() {
+        assert_eq!(format_hms(0), "0:00");
+        assert_eq!(format_hms(612), "10:12");
+        assert_eq!(format_hms(3661), "1:01:01");
+    }
 }

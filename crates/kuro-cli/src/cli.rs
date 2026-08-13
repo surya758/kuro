@@ -119,14 +119,10 @@ pub struct Cli {
 #[derive(Subcommand, Debug)]
 pub enum Command {
     /// Search every enabled provider.
-    Search {
-        query: Vec<String>,
-    },
+    Search { query: Vec<String> },
 
     /// Search, pick a series and episode interactively, then play.
-    Watch {
-        query: Vec<String>,
-    },
+    Watch { query: Vec<String> },
 
     /// Play an episode, or queue a range, of the best-matching series.
     Play {
@@ -208,9 +204,7 @@ pub enum Command {
     Doctor,
 
     /// Generate a shell completion script.
-    Completions {
-        shell: clap_complete::Shell,
-    },
+    Completions { shell: clap_complete::Shell },
 }
 
 #[derive(Subcommand, Debug)]
@@ -224,12 +218,20 @@ pub enum BookmarkAction {
 pub enum ProviderAction {
     /// List providers with their enabled state and health.
     List,
-    Enable { id: String },
-    Disable { id: String },
+    Enable {
+        id: String,
+    },
+    Disable {
+        id: String,
+    },
     /// Enable exactly one provider and disable the rest.
-    Only { id: String },
+    Only {
+        id: String,
+    },
     /// Run the full scrape chain against a provider and report timings.
-    Test { id: String },
+    Test {
+        id: String,
+    },
     /// Re-read selector TOMLs and report what loaded.
     Reload,
 }

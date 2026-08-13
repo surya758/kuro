@@ -50,8 +50,7 @@ impl HealthStore {
     }
 
     pub fn save(&self, paths: &Paths) -> Result<(), StoreError> {
-        let text = serde_json::to_string_pretty(self)
-            .expect("HealthStore is always serialisable");
+        let text = serde_json::to_string_pretty(self).expect("HealthStore is always serialisable");
         write_atomic(&paths.health_file(), &text)
     }
 
@@ -77,12 +76,7 @@ impl HealthStore {
         }
     }
 
-    pub fn record_failure(
-        &mut self,
-        id: &str,
-        error: &str,
-        threshold: u32,
-    ) -> HealthTransition {
+    pub fn record_failure(&mut self, id: &str, error: &str, threshold: u32) -> HealthTransition {
         let entry = self.providers.entry(id.to_string()).or_default();
         let was_disabled = entry.auto_disabled;
 
@@ -135,9 +129,18 @@ mod tests {
     #[test]
     fn disables_only_once_threshold_is_reached() {
         let mut store = HealthStore::default();
-        assert_eq!(store.record_failure("p", "boom", 3), HealthTransition::Unchanged);
-        assert_eq!(store.record_failure("p", "boom", 3), HealthTransition::Unchanged);
-        assert_eq!(store.record_failure("p", "boom", 3), HealthTransition::JustDisabled);
+        assert_eq!(
+            store.record_failure("p", "boom", 3),
+            HealthTransition::Unchanged
+        );
+        assert_eq!(
+            store.record_failure("p", "boom", 3),
+            HealthTransition::Unchanged
+        );
+        assert_eq!(
+            store.record_failure("p", "boom", 3),
+            HealthTransition::JustDisabled
+        );
         assert!(store.get("p").auto_disabled);
     }
 
@@ -147,7 +150,10 @@ mod tests {
         for _ in 0..3 {
             store.record_failure("p", "boom", 3);
         }
-        assert_eq!(store.record_failure("p", "boom", 3), HealthTransition::Unchanged);
+        assert_eq!(
+            store.record_failure("p", "boom", 3),
+            HealthTransition::Unchanged
+        );
     }
 
     #[test]

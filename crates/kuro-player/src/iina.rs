@@ -3,7 +3,7 @@
 //! `iina-cli` forwards any mpv option prefixed with `--mpv-`, which is what makes
 //! header injection, resume, and a readable title possible without patching IINA.
 
-use crate::{PlaybackOpts, PlayHandle, Player};
+use crate::{PlayHandle, PlaybackOpts, Player};
 use async_trait::async_trait;
 use kuro_core::{PlayerError, Stream};
 use std::path::PathBuf;
@@ -175,9 +175,8 @@ mod tests {
         headers.insert("Referer".to_string(), "https://site.tld/".to_string());
         let args = player().args(&stream_with_headers(headers), &PlaybackOpts::default());
 
-        assert!(args.contains(
-            &"--mpv-http-header-fields-append=Referer: https://site.tld/".to_string()
-        ));
+        assert!(args
+            .contains(&"--mpv-http-header-fields-append=Referer: https://site.tld/".to_string()));
     }
 
     #[test]
@@ -197,16 +196,17 @@ mod tests {
             .filter(|a| a.starts_with("--mpv-http-header-fields-append="))
             .collect();
         assert_eq!(appends.len(), 2);
-        assert!(appends
-            .iter()
-            .any(|a| a.ends_with("10_15_7), Chrome")));
+        assert!(appends.iter().any(|a| a.ends_with("10_15_7), Chrome")));
     }
 
     #[test]
     fn irrelevant_extractor_headers_are_not_forwarded() {
         let mut headers = HashMap::new();
         headers.insert("Referer".to_string(), "https://site.tld/".to_string());
-        headers.insert("Accept".to_string(), "text/html,application/xml".to_string());
+        headers.insert(
+            "Accept".to_string(),
+            "text/html,application/xml".to_string(),
+        );
         headers.insert("Sec-Fetch-Mode".to_string(), "navigate".to_string());
 
         let args = player().args(&stream_with_headers(headers), &PlaybackOpts::default());
@@ -220,7 +220,10 @@ mod tests {
 
     #[test]
     fn no_header_flag_when_none_are_required() {
-        let args = player().args(&stream_with_headers(HashMap::new()), &PlaybackOpts::default());
+        let args = player().args(
+            &stream_with_headers(HashMap::new()),
+            &PlaybackOpts::default(),
+        );
         assert!(!args
             .iter()
             .any(|a| a.starts_with("--mpv-http-header-fields")));
@@ -255,6 +258,9 @@ mod tests {
             ipc_socket: Some("/tmp/sock".to_string()),
         };
         let args = player().args(&stream_with_headers(HashMap::new()), &opts);
-        assert_eq!(args.last().expect("has args"), "https://cdn.example.com/chunklist.m3u8");
+        assert_eq!(
+            args.last().expect("has args"),
+            "https://cdn.example.com/chunklist.m3u8"
+        );
     }
 }

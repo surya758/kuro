@@ -33,11 +33,7 @@ pub struct SearchResults {
 ///
 /// `AssertUnwindSafe` is sound here because a poisoned scraper future is dropped
 /// on panic and never observed again — nothing downstream reads its state.
-pub async fn guarded<T, F>(
-    provider_id: ProviderId,
-    timeout: Duration,
-    fut: F,
-) -> ProviderOutcome<T>
+pub async fn guarded<T, F>(provider_id: ProviderId, timeout: Duration, fut: F) -> ProviderOutcome<T>
 where
     F: std::future::Future<Output = Result<T, ProviderError>>,
 {
@@ -161,8 +157,14 @@ mod tests {
 
     #[test]
     fn exact_match_outranks_prefix_and_substring() {
-        assert!(match_score("martial peak", "martial peak") > match_score("martial peak s2", "martial peak"));
-        assert!(match_score("martial peak s2", "martial peak") > match_score("the martial peak", "martial peak"));
+        assert!(
+            match_score("martial peak", "martial peak")
+                > match_score("martial peak s2", "martial peak")
+        );
+        assert!(
+            match_score("martial peak s2", "martial peak")
+                > match_score("the martial peak", "martial peak")
+        );
     }
 
     #[test]

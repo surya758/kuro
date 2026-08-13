@@ -154,7 +154,8 @@ mod tests {
 
     /// A cache in a unique temp directory, cleaned up by the caller.
     fn temp_cache(name: &str) -> (HttpCache, PathBuf) {
-        let dir = std::env::temp_dir().join(format!("kuro-cache-test-{name}-{}", std::process::id()));
+        let dir =
+            std::env::temp_dir().join(format!("kuro-cache-test-{name}-{}", std::process::id()));
         std::fs::remove_dir_all(&dir).ok();
         (HttpCache::new(Some(dir.clone())), dir)
     }
@@ -162,8 +163,15 @@ mod tests {
     #[test]
     fn round_trips_a_body() {
         let (cache, dir) = temp_cache("roundtrip");
-        cache.put("https://x.tld/a", "<html>hi</html>", Duration::from_secs(60));
-        assert_eq!(cache.get("https://x.tld/a").as_deref(), Some("<html>hi</html>"));
+        cache.put(
+            "https://x.tld/a",
+            "<html>hi</html>",
+            Duration::from_secs(60),
+        );
+        assert_eq!(
+            cache.get("https://x.tld/a").as_deref(),
+            Some("<html>hi</html>")
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 

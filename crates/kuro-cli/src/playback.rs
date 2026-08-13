@@ -52,7 +52,10 @@ async fn resolve_embeds(
 }
 
 /// Order mirrors by the configured host preference, best first.
-fn order_by_preference(mut mirrors: Vec<ResolvedMirror>, preference: &[String]) -> Vec<ResolvedMirror> {
+fn order_by_preference(
+    mut mirrors: Vec<ResolvedMirror>,
+    preference: &[String],
+) -> Vec<ResolvedMirror> {
     mirrors.sort_by_key(|m| {
         let label = m.label.to_ascii_lowercase();
         preference
@@ -125,8 +128,7 @@ pub async fn ordered_mirrors(
 }
 
 pub async fn play(app: &mut App, req: PlayRequest<'_>) -> Result<()> {
-    let ordered =
-        ordered_mirrors(app, &req.provider, req.episode, req.mirror.as_deref()).await?;
+    let ordered = ordered_mirrors(app, &req.provider, req.episode, req.mirror.as_deref()).await?;
 
     let mut failures = Vec::new();
 
@@ -147,7 +149,15 @@ pub async fn play(app: &mut App, req: PlayRequest<'_>) -> Result<()> {
             continue;
         };
 
-        return launch(app, req.series, req.episode, &stream, mirror, req.start_secs).await;
+        return launch(
+            app,
+            req.series,
+            req.episode,
+            &stream,
+            mirror,
+            req.start_secs,
+        )
+        .await;
     }
 
     anyhow::bail!(
@@ -164,11 +174,7 @@ async fn launch(
     mirror: &ResolvedMirror,
     start_secs: Option<u64>,
 ) -> Result<()> {
-    let title = format!(
-        "{} · Episode {}",
-        series.title,
-        episode.number_label()
-    );
+    let title = format!("{} · Episode {}", series.title, episode.number_label());
 
     let socket = ipc_socket_path();
     let opts = PlaybackOpts {

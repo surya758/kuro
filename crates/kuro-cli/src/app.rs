@@ -5,7 +5,7 @@ use kuro_core::{FetchConfig, FetchCtx, Provider, ProviderId, QualityPref};
 use kuro_player::{IinaPlayer, Player};
 use kuro_providers::Registry;
 use kuro_resolver::ResolverChain;
-use kuro_store::{Config, HealthStore, History, HealthTransition, Paths};
+use kuro_store::{Config, HealthStore, HealthTransition, History, Paths};
 use std::sync::Arc;
 
 pub struct App {
@@ -122,7 +122,9 @@ impl App {
     }
 
     pub fn save_health(&self) -> Result<()> {
-        self.health.save(&self.paths).context("saving provider health")
+        self.health
+            .save(&self.paths)
+            .context("saving provider health")
     }
 
     pub fn save_config(&self) -> Result<()> {

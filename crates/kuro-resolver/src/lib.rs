@@ -42,11 +42,7 @@ impl ResolverChain {
         self
     }
 
-    pub async fn resolve(
-        &self,
-        url: &Url,
-        pref: QualityPref,
-    ) -> Result<Vec<Stream>, ResolveError> {
+    pub async fn resolve(&self, url: &Url, pref: QualityPref) -> Result<Vec<Stream>, ResolveError> {
         for resolver in &self.native {
             if resolver.can_handle(url) {
                 debug!(resolver = resolver.name(), %url, "resolving with native extractor");

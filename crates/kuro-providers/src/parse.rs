@@ -20,12 +20,20 @@ fn compile(selector: &str) -> Result<Selector, ProviderError> {
 }
 
 fn text_of(el: ElementRef<'_>) -> String {
-    el.text().collect::<String>().split_whitespace().collect::<Vec<_>>().join(" ")
+    el.text()
+        .collect::<String>()
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn select_text(root: ElementRef<'_>, selector: &str) -> Result<Option<String>, ProviderError> {
     let sel = compile(selector)?;
-    Ok(root.select(&sel).next().map(text_of).filter(|s| !s.is_empty()))
+    Ok(root
+        .select(&sel)
+        .next()
+        .map(text_of)
+        .filter(|s| !s.is_empty()))
 }
 
 /// First `src`-like attribute, checking lazy-load attributes before `src` since
@@ -40,7 +48,7 @@ fn image_url(el: ElementRef<'_>, base: &Url) -> Option<Url> {
 /// Last non-empty path segment, used as the provider-local series id.
 pub fn slug_from_url(url: &Url) -> String {
     url.path_segments()
-        .and_then(|segs| segs.filter(|s| !s.is_empty()).next_back())
+        .and_then(|mut segs| segs.rfind(|s| !s.is_empty()))
         .unwrap_or("")
         .to_string()
 }
@@ -89,8 +97,7 @@ fn year_from(s: &str) -> Option<u16> {
         }
         // Reject digits embedded in a longer run, so "12024" isn't read as 2024.
         let bounded_left = start == 0 || !bytes[start - 1].is_ascii_digit();
-        let bounded_right =
-            start + 4 == bytes.len() || !bytes[start + 4].is_ascii_digit();
+        let bounded_right = start + 4 == bytes.len() || !bytes[start + 4].is_ascii_digit();
         if !bounded_left || !bounded_right {
             continue;
         }
@@ -182,7 +189,10 @@ pub fn parse_series_details(
     let genres = match &sel.genres {
         Some(s) => {
             let gs = compile(s)?;
-            root.select(&gs).map(text_of).filter(|t| !t.is_empty()).collect()
+            root.select(&gs)
+                .map(text_of)
+                .filter(|t| !t.is_empty())
+                .collect()
         }
         None => Vec::new(),
     };
@@ -266,7 +276,11 @@ pub fn parse_episodes(
         return Err(ProviderError::parse(&sel.item, "episode list"));
     }
 
-    out.sort_by(|a, b| a.number.partial_cmp(&b.number).unwrap_or(std::cmp::Ordering::Equal));
+    out.sort_by(|a, b| {
+        a.number
+            .partial_cmp(&b.number)
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
     Ok(out)
 }
 
@@ -459,8 +473,9 @@ mod tests {
 
     #[test]
     fn reads_episode_number_from_slug() {
-        let url = Url::parse("https://x.tld/martial-god-asura-season-2-episode-15-lucifer-donghua/")
-            .expect("valid url");
+        let url =
+            Url::parse("https://x.tld/martial-god-asura-season-2-episode-15-lucifer-donghua/")
+                .expect("valid url");
         assert_eq!(episode_number_from_url(&url), Some(15.0));
     }
 

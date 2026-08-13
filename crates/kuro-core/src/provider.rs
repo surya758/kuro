@@ -29,11 +29,17 @@ pub trait Provider: Send + Sync {
         series: &Series,
     ) -> Result<SeriesDetails, ProviderError>;
 
-    async fn episodes(&self, ctx: &FetchCtx, series: &Series)
-        -> Result<Vec<Episode>, ProviderError>;
+    async fn episodes(
+        &self,
+        ctx: &FetchCtx,
+        series: &Series,
+    ) -> Result<Vec<Episode>, ProviderError>;
 
-    async fn mirrors(&self, ctx: &FetchCtx, episode: &Episode)
-        -> Result<Vec<Mirror>, ProviderError>;
+    async fn mirrors(
+        &self,
+        ctx: &FetchCtx,
+        episode: &Episode,
+    ) -> Result<Vec<Mirror>, ProviderError>;
 
     /// Resolve one mirror to the third-party embed URL (e.g. a Rumble embed page).
     ///
