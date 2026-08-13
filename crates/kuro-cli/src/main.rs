@@ -57,6 +57,15 @@ async fn run(cli: Cli) -> Result<()> {
         return Ok(());
     }
 
+    // `kuro <query>` is exactly `kuro search <query>`. Normalising to one command
+    // here, rather than adding a second route, is what keeps the two forms from
+    // drifting: the shorthand used to bypass the TTY/`--json` check and print
+    // nothing at all when piped.
+    let command = match cli.command {
+        None if !cli.query.is_empty() => Some(Command::Search { query: cli.query }),
+        other => other,
+    };
+
     let mut app = App::new(
         cli.provider,
         cli.quality,
@@ -67,7 +76,7 @@ async fn run(cli: Cli) -> Result<()> {
         cli.no_cache,
     )?;
 
-    match &cli.command {
+    match &command {
         // At a terminal, searching leads somewhere: results become a browsable
         // list. Piped or `--json`, it stays a plain printable list.
         Some(Command::Search { query }) if ui::interactive() && !app.json => {
@@ -96,8 +105,6 @@ async fn run(cli: Cli) -> Result<()> {
         Some(Command::Doctor) => commands::doctor(&mut app).await,
         Some(Command::Completions { .. }) => unreachable!("handled above"),
 
-        // `kuro <query>` is shorthand for the browse flow; bare `kuro` opens the TUI.
-        None if !cli.query.is_empty() => flow::run(&mut app, &cli.query.join(" ")).await,
         None => tui::run(&mut app).await,
     }
 }

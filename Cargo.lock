@@ -1186,7 +1186,7 @@ dependencies = [
 
 [[package]]
 name = "kuro-cli"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1210,7 +1210,7 @@ dependencies = [
 
 [[package]]
 name = "kuro-core"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "async-trait",
  "futures",
@@ -1225,7 +1225,7 @@ dependencies = [
 
 [[package]]
 name = "kuro-player"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "async-trait",
  "kuro-core",
@@ -1238,7 +1238,7 @@ dependencies = [
 
 [[package]]
 name = "kuro-providers"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -1254,7 +1254,7 @@ dependencies = [
 
 [[package]]
 name = "kuro-resolver"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "async-trait",
  "kuro-core",
@@ -1267,7 +1267,7 @@ dependencies = [
 
 [[package]]
 name = "kuro-store"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "chrono",
  "directories",

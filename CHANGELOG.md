@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.2.1
+
+### Fixed
+
+- `kuro <query>` now behaves exactly like `kuro search <query>`. The shorthand
+  bypassed the terminal/`--json` check and wrote only to stderr, so piping it or
+  asking for JSON produced no output at all. Both forms are now the same command.
+
 ## v0.2.0
 
 ### Added
