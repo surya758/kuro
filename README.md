@@ -20,6 +20,18 @@ $ kuro play "martial god asura season 2" --ep 15
 ▶  Martial God Asura Season 2 · Episode 15  [Rumble · 1080p]
 ```
 
+## Contents
+
+- [Install](#install)
+- [Usage](#usage)
+- [Providers](#providers)
+  - [Adding a site](#adding-a-site)
+- [Configuration](#configuration)
+- [How it works](#how-it-works)
+- [Development](#development)
+- [Status](#status)
+- [Legal](#legal)
+
 ## Install
 
 ```sh
@@ -228,9 +240,20 @@ analysis.
 Working: interactive TUI, search, playback with mirror failover, downloads,
 provider toggling/health, watch history and resume, disk caching.
 
-Not supported: sites behind a Cloudflare challenge — `kuro` never runs page
-JavaScript, so a challenge-gated site cannot be scraped. `kuro provider test` will
-report `Blocked` for these.
+Not built yet:
+
+- **Intro skipping.** Would need [ani-skip], which keys on MyAnimeList IDs. Neither
+  bundled provider exposes one, so it would first need a title-to-MAL matching layer.
+- **Concurrent downloads.** `--all` fetches episodes one at a time.
+- **Other players and platforms.** IINA on macOS only, though `Player` is a trait.
+
+Not supported: sites behind a Cloudflare challenge. `kuro` never runs page
+JavaScript, so a challenge-gated site cannot be scraped — `kuro provider test`
+reports `Blocked` for these.
+
+No `fzf` dependency: selection is handled by the built-in TUI.
+
+[ani-skip]: https://github.com/synacktraa/ani-skip
 
 ## Legal
 
