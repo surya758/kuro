@@ -165,6 +165,38 @@ impl FetchCtx {
         }
     }
 
+    /// POST a JSON body and return the response text.
+    ///
+    /// Used for GraphQL metadata lookups. Deliberately not retried or cached —
+    /// callers treat failure as "no data" and carry on.
+    pub async fn post_json(
+        &self,
+        url: &Url,
+        body: &serde_json::Value,
+    ) -> Result<String, ProviderError> {
+        let _permit = self
+            .permits
+            .acquire()
+            .await
+            .expect("semaphore is never closed");
+
+        let resp = self
+            .client
+            .post(url.clone())
+            .json(body)
+            .send()
+            .await
+            .map_err(|e| {
+                if e.is_timeout() {
+                    ProviderError::Timeout
+                } else {
+                    ProviderError::Network(e)
+                }
+            })?;
+
+        Self::classify(resp).await
+    }
+
     async fn classify(resp: reqwest::Response) -> Result<String, ProviderError> {
         let status = resp.status();
 

@@ -1,5 +1,25 @@
 # Changelog
 
+## v0.1.1
+
+### Added
+
+- **Intro and outro skipping** (`--skip`). Titles resolve to a MyAnimeList id via
+  AniList, then [AniSkip] supplies the intervals; a small mpv Lua script performs the
+  seek. Coverage is crowd-sourced and thin for donghua, so "no data" is the common
+  outcome and playback simply continues.
+- **Concurrent downloads** (`-j/--jobs`, default 3). Mirror resolution happens up
+  front, then downloads run in parallel with per-episode status lines instead of
+  interleaved progress bars.
+
+### Fixed
+
+- Season-specific titles now resolve to their own MyAnimeList entry. Stripping the
+  season suffix before searching would have matched season one and applied its
+  opening times to every later season.
+
+[AniSkip]: https://api.aniskip.com/
+
 ## v0.1.0
 
 First release.

@@ -166,6 +166,36 @@ pub async fn play(app: &mut App, req: PlayRequest<'_>) -> Result<()> {
     );
 }
 
+/// Look up opening/ending times for this episode.
+///
+/// Best-effort throughout: a missing MyAnimeList match or an episode AniSkip has
+/// never seen just means no skipping. AniSkip is crowd-sourced and its donghua
+/// coverage is thin, so "not found" is the common case, not an error.
+async fn resolve_skip(
+    app: &App,
+    series: &Series,
+    episode: &Episode,
+) -> Option<kuro_core::SkipTimes> {
+    let Some(mal_id) = kuro_core::skip::lookup_mal_id(&app.ctx, &series.title).await else {
+        eprintln!("  skip: no MyAnimeList match for this series");
+        return None;
+    };
+
+    match kuro_core::skip::fetch_skip_times(&app.ctx, mal_id, episode.number).await {
+        Some(times) => {
+            eprintln!("  skip: {}", times.describe());
+            Some(times)
+        }
+        None => {
+            eprintln!(
+                "  skip: no AniSkip data for episode {}",
+                episode.number_label()
+            );
+            None
+        }
+    }
+}
+
 async fn launch(
     app: &mut App,
     series: &Series,
@@ -176,12 +206,28 @@ async fn launch(
 ) -> Result<()> {
     let title = format!("{} · Episode {}", series.title, episode.number_label());
 
+    let skip = if app.skip {
+        resolve_skip(app, series, episode).await
+    } else {
+        None
+    };
+
+    // Only materialise the mpv script when there is actually something to skip.
+    let skip_script = match skip {
+        Some(_) => kuro_player::write_skip_script()
+            .map_err(|e| warn!(error = %e, "could not write skip script"))
+            .ok(),
+        None => None,
+    };
+
     let socket = ipc_socket_path();
     let opts = PlaybackOpts {
         title: Some(title.clone()),
         start_secs: start_secs.filter(|_| app.config.player.resume),
         fullscreen: app.config.player.fullscreen,
         ipc_socket: Some(socket.clone()),
+        skip,
+        skip_script,
     };
 
     let player = require_player(app).await?;

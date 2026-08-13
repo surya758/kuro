@@ -9,12 +9,14 @@ pub mod error;
 pub mod fetch;
 pub mod orchestrator;
 pub mod provider;
+pub mod skip;
 pub mod types;
 
 pub use cache::HttpCache;
 pub use error::{PlayerError, ProviderError, ResolveError};
 pub use fetch::{FetchConfig, FetchCtx, DEFAULT_USER_AGENT};
 pub use provider::Provider;
+pub use skip::{Interval, SkipTimes};
 pub use types::{
     Episode, Mirror, ProviderId, QualityPref, Series, SeriesDetails, SeriesStatus, Stream,
     StreamKind,

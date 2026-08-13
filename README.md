@@ -106,16 +106,21 @@ kuro bookmark add <query>                 # follow a series
 
 kuro download <query> --ep 15 -o ~/Anime  # save instead of stream
 kuro download <query> --ep 1-5 -o ~/Anime # a range
-kuro download <query> --all -o ~/Anime    # the whole series
+kuro download <query> --all -o ~/Anime    # the whole series, 3 at a time
+kuro download <query> --all -j 6          # ...or six
 ```
+
+Add `--skip` to any play command to jump openings and endings, where [AniSkip] has
+data for the episode. Coverage is crowd-sourced and thin for donghua — kuro says so
+and plays on when there is nothing to skip.
 
 Global flags: `--provider <id>`, `--quality <best|1080p|720p|…>`,
 `-S/--select-nth N` (take the Nth search result instead of the best match, for
 scripting), `--json`, `--dry-run` (print the resolved stream URL and player command,
 launch nothing), `--no-cache`, `-v`/`-vv` for logs.
 
-`KURO_QUALITY` and `KURO_PROVIDER` set the defaults for `--quality` and
-`--provider`.
+`KURO_QUALITY`, `KURO_PROVIDER` and `KURO_SKIP` set the defaults for `--quality`,
+`--provider` and `--skip`.
 
 Scraped pages are cached on disk, so a repeated search is near-instant. `kuro cache
 status` shows where and how much; `kuro cache clear` empties it.
@@ -215,7 +220,7 @@ Page JavaScript is never executed, which sidesteps the anti-bot layer entirely.
 ## Development
 
 ```sh
-cargo test                # 84 tests, all offline
+cargo test                # 94 tests, all offline
 cargo run -- search foo
 ```
 
@@ -242,9 +247,6 @@ provider toggling/health, watch history and resume, disk caching.
 
 Not built yet:
 
-- **Intro skipping.** Would need [ani-skip], which keys on MyAnimeList IDs. Neither
-  bundled provider exposes one, so it would first need a title-to-MAL matching layer.
-- **Concurrent downloads.** `--all` fetches episodes one at a time.
 - **Other players and platforms.** IINA on macOS only, though `Player` is a trait.
 
 Not supported: sites behind a Cloudflare challenge. `kuro` never runs page
@@ -253,7 +255,7 @@ reports `Blocked` for these.
 
 No `fzf` dependency: selection is handled by the built-in TUI.
 
-[ani-skip]: https://github.com/synacktraa/ani-skip
+[AniSkip]: https://api.aniskip.com/
 
 ## Legal
 

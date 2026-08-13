@@ -7,7 +7,7 @@ pub mod iina;
 pub mod ipc;
 
 use async_trait::async_trait;
-use kuro_core::{PlayerError, Stream};
+use kuro_core::{PlayerError, SkipTimes, Stream};
 
 pub use iina::IinaPlayer;
 pub use ipc::Progress;
@@ -21,6 +21,24 @@ pub struct PlaybackOpts {
     pub fullscreen: bool,
     /// Path for the mpv IPC socket, enabling position tracking.
     pub ipc_socket: Option<String>,
+    /// Opening/ending intervals to jump over. Requires `skip_script`.
+    pub skip: Option<SkipTimes>,
+    /// Path to the mpv Lua script that performs the skipping.
+    pub skip_script: Option<std::path::PathBuf>,
+}
+
+/// The mpv script that performs skipping, embedded so it works identically for a
+/// `cargo install` and a Homebrew install with no asset-path lookup.
+const SKIP_SCRIPT: &str = include_str!("kuro-skip.lua");
+
+/// Write the skip script to a temp file and return its path.
+///
+/// Rewritten each run rather than cached, so an upgrade can never leave a stale
+/// script behind.
+pub fn write_skip_script() -> std::io::Result<std::path::PathBuf> {
+    let path = std::env::temp_dir().join(format!("kuro-skip-{}.lua", std::process::id()));
+    std::fs::write(&path, SKIP_SCRIPT)?;
+    Ok(path)
 }
 
 pub struct PlayHandle {

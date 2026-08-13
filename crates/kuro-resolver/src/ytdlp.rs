@@ -124,38 +124,57 @@ impl YtDlpResolver {
     /// then picks formats and muxes video with audio itself, which a single
     /// pre-resolved rendition cannot do.
     ///
-    /// stdio is inherited so its progress bar reaches the terminal directly.
+    /// When `quiet` is false, stdio is inherited so yt-dlp's progress bar reaches
+    /// the terminal. Parallel downloads set it true — several progress bars writing
+    /// to one terminal is unreadable — and errors are surfaced from captured stderr
+    /// instead.
     pub async fn download(
         &self,
         url: &Url,
         pref: QualityPref,
         output_template: &str,
+        quiet: bool,
     ) -> Result<(), ResolveError> {
         let format = format_selector(pref);
-        debug!(%url, %format, output_template, "invoking yt-dlp for download");
+        debug!(%url, %format, output_template, quiet, "invoking yt-dlp for download");
 
-        let status = tokio::process::Command::new(&self.binary)
-            .args([
-                "--no-warnings",
-                "--no-playlist",
-                "--newline",
-                "-f",
-                &format,
-                "-o",
-                output_template,
-                url.as_str(),
-            ])
-            .stdin(std::process::Stdio::null())
-            .status()
-            .await
-            .map_err(|e| {
-                if e.kind() == std::io::ErrorKind::NotFound {
-                    ResolveError::YtDlpMissing
-                } else {
-                    ResolveError::Io(e)
-                }
-            })?;
+        let mut cmd = tokio::process::Command::new(&self.binary);
+        cmd.args([
+            "--no-warnings",
+            "--no-playlist",
+            "--newline",
+            "-f",
+            &format,
+            "-o",
+            output_template,
+            url.as_str(),
+        ])
+        .stdin(std::process::Stdio::null());
 
+        let to_err = |e: std::io::Error| {
+            if e.kind() == std::io::ErrorKind::NotFound {
+                ResolveError::YtDlpMissing
+            } else {
+                ResolveError::Io(e)
+            }
+        };
+
+        if quiet {
+            cmd.arg("--no-progress");
+            let output = cmd.output().await.map_err(to_err)?;
+            if !output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                let message = stderr
+                    .lines()
+                    .find(|l| l.contains("ERROR"))
+                    .unwrap_or_else(|| stderr.trim())
+                    .to_string();
+                return Err(ResolveError::YtDlp(message));
+            }
+            return Ok(());
+        }
+
+        let status = cmd.status().await.map_err(to_err)?;
         if !status.success() {
             return Err(ResolveError::YtDlp(format!(
                 "yt-dlp exited with status {}",

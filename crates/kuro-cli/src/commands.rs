@@ -381,6 +381,7 @@ pub async fn download(
     all: bool,
     mirror: Option<String>,
     out: &std::path::Path,
+    jobs: usize,
 ) -> Result<()> {
     let ytdlp = kuro_resolver::ytdlp::YtDlpResolver::default();
     if !ytdlp.is_available().await {
@@ -413,55 +414,80 @@ pub async fn download(
 
     let mut failed = Vec::new();
 
-    for (i, episode) in wanted.iter().enumerate() {
-        eprintln!(
-            "\n[{}/{}] Episode {}",
-            i + 1,
-            wanted.len(),
-            episode.number_label()
-        );
+    // Mirror resolution needs `&mut App` for health tracking, so it happens up
+    // front; only the downloads themselves run in parallel. Resolution is cheap
+    // next to a download, and pages are cached.
+    eprintln!("Resolving {} episode(s)…", wanted.len());
+    let mut ready = Vec::new();
 
-        let mirrors = match crate::playback::ordered_mirrors(
-            app,
-            &provider,
-            episode,
-            mirror.as_deref(),
-        )
-        .await
-        {
-            Ok(m) => m,
+    for episode in &wanted {
+        match crate::playback::ordered_mirrors(app, &provider, episode, mirror.as_deref()).await {
+            Ok(mirrors) => ready.push((episode.clone(), mirrors)),
             Err(e) => {
-                eprintln!("  \x1b[31mskipped\x1b[0m: {e}");
+                eprintln!(
+                    "  \x1b[31m✗\x1b[0m Episode {}: {e}",
+                    episode.number_label()
+                );
                 failed.push(episode.number_label());
-                continue;
             }
-        };
-
-        // `%(ext)s` is a yt-dlp placeholder — it fills in the real container.
-        let filename = format!(
-            "{} - E{}.%(ext)s",
-            safe_filename(&chosen.title),
-            episode.number_label()
-        );
-        let template = out.join(filename).display().to_string();
-
-        // Try each mirror in turn, exactly as playback does.
-        let mut saved = false;
-        for m in &mirrors {
-            eprintln!("  downloading from {} …", m.label);
-            match ytdlp.download(&m.embed, app.quality, &template).await {
-                Ok(()) => {
-                    saved = true;
-                    break;
-                }
-                Err(e) => eprintln!("  {} failed: {e}", m.label),
-            }
-        }
-
-        if !saved {
-            failed.push(episode.number_label());
         }
     }
+
+    let concurrency = jobs.max(1);
+    // With more than one download in flight, yt-dlp's progress bars would overwrite
+    // each other, so they are silenced and replaced with per-episode lines.
+    let quiet = concurrency > 1;
+    if quiet {
+        eprintln!("Downloading {} episode(s), {concurrency} at a time…", ready.len());
+    }
+
+    let limiter = Arc::new(tokio::sync::Semaphore::new(concurrency));
+    let ytdlp = Arc::new(ytdlp);
+    let quality = app.quality;
+    let series_title = chosen.title.clone();
+
+    let tasks = ready.into_iter().map(|(episode, mirrors)| {
+        let limiter = Arc::clone(&limiter);
+        let ytdlp = Arc::clone(&ytdlp);
+        let out = out.to_path_buf();
+        let series_title = series_title.clone();
+
+        async move {
+            let _permit = limiter.acquire().await.expect("semaphore is never closed");
+            let label = episode.number_label();
+
+            // `%(ext)s` is a yt-dlp placeholder — it fills in the real container.
+            let filename = format!("{} - E{label}.%(ext)s", safe_filename(&series_title));
+            let template = out.join(filename).display().to_string();
+
+            if quiet {
+                eprintln!("  ↓ Episode {label}");
+            }
+
+            // Try each mirror in turn, exactly as playback does.
+            let mut errors = Vec::new();
+            for m in &mirrors {
+                if !quiet {
+                    eprintln!("\n  Episode {label} — downloading from {} …", m.label);
+                }
+                match ytdlp.download(&m.embed, quality, &template, quiet).await {
+                    Ok(()) => {
+                        eprintln!("  \x1b[32m✓\x1b[0m Episode {label}");
+                        return None;
+                    }
+                    Err(e) => errors.push(format!("{}: {e}", m.label)),
+                }
+            }
+
+            eprintln!(
+                "  \x1b[31m✗\x1b[0m Episode {label} — {}",
+                errors.join("; ")
+            );
+            Some(label)
+        }
+    });
+
+    failed.extend(futures::future::join_all(tasks).await.into_iter().flatten());
 
     if failed.is_empty() {
         eprintln!("\n\x1b[32mDone.\x1b[0m Saved to {}", out.display());

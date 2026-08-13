@@ -19,6 +19,8 @@ pub struct App {
     pub provider_filter: Option<String>,
     /// `--select-nth`: pick the Nth search result rather than the best match.
     pub select_nth: Option<usize>,
+    /// `--skip`: jump over openings and endings when AniSkip has data.
+    pub skip: bool,
     pub json: bool,
     pub dry_run: bool,
 }
@@ -28,6 +30,7 @@ impl App {
         provider_filter: Option<String>,
         quality_override: Option<QualityPref>,
         select_nth: Option<usize>,
+        skip: bool,
         json: bool,
         dry_run: bool,
         no_cache: bool,
@@ -59,6 +62,7 @@ impl App {
             quality,
             provider_filter,
             select_nth,
+            skip,
             json,
             dry_run,
         })

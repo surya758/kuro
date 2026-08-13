@@ -111,6 +111,10 @@ pub struct Cli {
     #[arg(long, global = true)]
     pub no_cache: bool,
 
+    /// Skip openings and endings, where AniSkip has data for the episode.
+    #[arg(long, global = true, env = "KURO_SKIP")]
+    pub skip: bool,
+
     /// Increase log verbosity (-v info, -vv debug, -vvv trace).
     #[arg(long, short, global = true, action = clap::ArgAction::Count)]
     pub verbose: u8,
@@ -156,6 +160,10 @@ pub enum Command {
         /// Directory to save into.
         #[arg(long, short = 'o', default_value = ".")]
         out: std::path::PathBuf,
+
+        /// Episodes to download at once.
+        #[arg(long, short = 'j', default_value_t = 3, value_name = "N")]
+        jobs: usize,
     },
 
     /// Play the next unwatched episode of the most recently watched series.

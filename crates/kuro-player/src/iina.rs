@@ -85,6 +85,24 @@ impl IinaPlayer {
             args.push(format!("--mpv-input-ipc-server={socket}"));
         }
 
+        // Intro/outro skipping. `--script-opt` is an append-alias, so one flag per
+        // option — `--script-opts` is comma-split and would mangle multiple values.
+        if let (Some(skip), Some(script)) = (opts.skip, opts.skip_script.as_ref()) {
+            args.push(format!("--mpv-script={}", script.display()));
+
+            let (op_start, op_end) = skip.op.map_or((-1.0, -1.0), |i| (i.start, i.end));
+            let (ed_start, ed_end) = skip.ed.map_or((-1.0, -1.0), |i| (i.start, i.end));
+
+            for (key, value) in [
+                ("op_start", op_start),
+                ("op_end", op_end),
+                ("ed_start", ed_start),
+                ("ed_end", ed_end),
+            ] {
+                args.push(format!("--mpv-script-opt=kuroskip-{key}={value}"));
+            }
+        }
+
         args.push(stream.url.to_string());
         args
     }
@@ -250,12 +268,57 @@ mod tests {
     }
 
     #[test]
+    fn skip_intervals_become_one_script_opt_each() {
+        use kuro_core::{Interval, SkipTimes};
+
+        let opts = PlaybackOpts {
+            skip: Some(SkipTimes {
+                op: Some(Interval {
+                    start: 0.0,
+                    end: 128.0,
+                }),
+                ed: None,
+            }),
+            skip_script: Some(PathBuf::from("/tmp/kuro-skip.lua")),
+            ..Default::default()
+        };
+        let args = player().args(&stream_with_headers(HashMap::new()), &opts);
+
+        assert!(args.contains(&"--mpv-script=/tmp/kuro-skip.lua".to_string()));
+        assert!(args.contains(&"--mpv-script-opt=kuroskip-op_end=128".to_string()));
+        // A missing interval is signalled as -1 rather than omitted, so the script
+        // never reads a stale default.
+        assert!(args.contains(&"--mpv-script-opt=kuroskip-ed_start=-1".to_string()));
+    }
+
+    #[test]
+    fn no_skip_args_without_both_times_and_script() {
+        use kuro_core::{Interval, SkipTimes};
+
+        // Times but no script path: the script would never load, so emit nothing.
+        let opts = PlaybackOpts {
+            skip: Some(SkipTimes {
+                op: Some(Interval {
+                    start: 0.0,
+                    end: 10.0,
+                }),
+                ed: None,
+            }),
+            skip_script: None,
+            ..Default::default()
+        };
+        let args = player().args(&stream_with_headers(HashMap::new()), &opts);
+        assert!(!args.iter().any(|a| a.starts_with("--mpv-script")));
+    }
+
+    #[test]
     fn stream_url_is_always_the_final_argument() {
         let opts = PlaybackOpts {
             title: Some("Show · Episode 1".to_string()),
             start_secs: Some(30),
             fullscreen: true,
             ipc_socket: Some("/tmp/sock".to_string()),
+            ..Default::default()
         };
         let args = player().args(&stream_with_headers(HashMap::new()), &opts);
         assert_eq!(
