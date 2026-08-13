@@ -23,11 +23,17 @@ $ kuro play "martial god asura season 2" --ep 15
 ## Install
 
 ```sh
-brew install yt-dlp                       # required for stream resolution
 brew install --cask iina                  # the player
+brew install yt-dlp                       # stream resolution and downloads
 
 cargo install --path crates/kuro-cli      # installs `kuro` to ~/.cargo/bin
 kuro doctor                               # verify everything is wired up
+```
+
+Or via Homebrew, once the repo is published:
+
+```sh
+brew install --HEAD suryakant/kuro/kuro
 ```
 
 Needs Rust 1.75+ and macOS. `kuro completions zsh > ~/.zfunc/_kuro` for tab
@@ -50,11 +56,17 @@ kuro next                                 # next unwatched episode
 kuro continue                             # resume where you stopped
 kuro list                                 # watch history
 kuro bookmark add <query>                 # follow a series
+
+kuro download <query> --ep 15 -o ~/Anime  # save instead of stream
+kuro download <query> --all -o ~/Anime    # the whole series
 ```
 
 Global flags: `--provider <id>`, `--quality <best|1080p|720p|…>`, `--json`,
 `--dry-run` (print the resolved stream URL and player command, launch nothing),
-`-v`/`-vv` for logs.
+`--no-cache`, `-v`/`-vv` for logs.
+
+Scraped pages are cached on disk, so a repeated search is near-instant. `kuro cache
+status` shows where and how much; `kuro cache clear` empties it.
 
 ## Providers
 
@@ -117,6 +129,7 @@ populated one.
 [general]
 default_quality = "1080p"
 concurrency     = 6
+cache           = true
 
 [player]
 backend    = "iina"
@@ -150,7 +163,7 @@ Page JavaScript is never executed, which sidesteps the anti-bot layer entirely.
 ## Development
 
 ```sh
-cargo test                # 63 tests, all offline
+cargo test                # 78 tests, all offline
 cargo run -- search foo
 ```
 
@@ -172,10 +185,12 @@ analysis.
 
 ## Status
 
-Working: interactive TUI, search, playback with mirror failover, provider
-toggling/health, watch history and resume.
+Working: interactive TUI, search, playback with mirror failover, downloads,
+provider toggling/health, watch history and resume, disk caching.
 
-Not implemented: response caching (every command refetches), and downloading.
+Not supported: sites behind a Cloudflare challenge — `kuro` never runs page
+JavaScript, so a challenge-gated site cannot be scraped. `kuro provider test` will
+report `Blocked` for these.
 
 ## Legal
 

@@ -622,10 +622,16 @@ explicit `Retry-After` when present. `ParseFailure`, `NotFound`, and `Blocked` a
 **not** retried — retrying a selector that no longer matches just wastes time and
 hammers the site. This is enforced by `ProviderError::is_retryable`.
 
-### Caching — *not yet built*
-Planned `moka` TTL cache: search results 5 min, series metadata 1 h, episode lists
-15 min. Resolved streams are never cached — CDN URLs are signed and short-lived.
-Today every command refetches.
+### Caching — *implemented*
+Disk-backed cache in `~/Library/Caches/kuro`, with per-entry TTLs: search results
+5 min, episode lists and mirror pages 15 min. Resolved streams are never cached —
+CDN URLs are signed and short-lived. `--no-cache` bypasses it for one run;
+`kuro cache clear` empties it.
+
+> The spec originally called for an in-memory `moka` cache. That was wrong for this
+> program: `kuro` is a CLI that exits between commands, so an in-process cache would
+> almost never be read back. On disk, a repeated search goes from **1.37 s to
+> 0.03 s**; in memory it would have saved nothing.
 
 ### Testing strategy
 
@@ -664,7 +670,8 @@ exact selector that failed on `ParseFailure`.
 | **M3** | Provider system | Declarative selector loading, toggle commands, health tracking + auto-disable | ✅ done |
 | **M4** | State | History, resume via mpv IPC, bookmarks, `kuro continue` / `kuro next` | ✅ done |
 | **M5** | TUI | `ratatui` search/series/provider screens | ✅ done |
-| **M6** | Hardening | Second provider, fixture test suite, `kuro doctor`, Homebrew tap | ◐ all but the Homebrew tap |
+| **M6** | Hardening | Second provider, fixture test suite, `kuro doctor`, Homebrew formula | ✅ done |
+| **v1.2** | Downloading | `kuro download`, single episode or whole series | ✅ done (pulled forward) |
 
 M2 is the point at which the tool is genuinely usable; everything after is leverage.
 
@@ -683,7 +690,7 @@ turned out to be expressible declaratively rather than needing a bespoke module.
 |---|---|
 | Site redesign breaks scraping | Declarative selectors → TOML edit, no recompile. `ParseFailure` names the dead selector. |
 | Provider disappears permanently | Multi-provider by design; auto-disable keeps it out of the way. |
-| Cloudflare / WAF challenge | Detected as `Blocked`, surfaced distinctly. Escalation path: optional `chromiumoxide` headless fallback (v2, opt-in only). |
+| Cloudflare / WAF challenge | Detected as `Blocked`, surfaced distinctly. **Confirmed real:** `anidb.app` returns `cf-mitigated: challenge` and a zero-byte 403 to every path but `robots.txt`, even with a complete browser header set. Such a site cannot be supported without executing page JavaScript, and building a challenge solver is out of scope — it circumvents an access control the operator deliberately deployed. The legitimate path is reusing the user's *own* browser session cookie (what `yt-dlp --cookies-from-browser` does), which is not yet implemented. |
 | Embed host adds DRM | Reported as unresolvable; mirror failover moves to the next host. |
 | `yt-dlp` drifts out of date | `kuro doctor` checks version and warns; `yt-dlp` is optional, not required. |
 | CDN URL expiry mid-session | URLs are never cached; re-resolve on replay. |
