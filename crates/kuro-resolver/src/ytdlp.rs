@@ -13,6 +13,14 @@ use std::collections::HashMap;
 use tracing::{debug, warn};
 use url::Url;
 
+/// Machine-readable progress, one line per tick on stdout.
+///
+/// Fields: downloaded bytes, total (falling back to the estimate, which is all HLS
+/// offers), speed in bytes/sec, and ETA in seconds. Unknown values arrive as `NA`.
+pub const PROGRESS_TEMPLATE: &str = "download:KURO|%(progress.downloaded_bytes)s|\
+     %(progress.total_bytes,progress.total_bytes_estimate)s|\
+     %(progress.speed)s|%(progress.eta)s";
+
 #[derive(Debug, Deserialize)]
 struct YtDlpOutput {
     #[serde(default)]
@@ -124,62 +132,84 @@ impl YtDlpResolver {
     /// then picks formats and muxes video with audio itself, which a single
     /// pre-resolved rendition cannot do.
     ///
-    /// When `quiet` is false, stdio is inherited so yt-dlp's progress bar reaches
-    /// the terminal. Parallel downloads set it true — several progress bars writing
-    /// to one terminal is unreadable — and errors are surfaced from captured stderr
-    /// instead.
-    pub async fn download(
+    /// Progress is emitted on stdout in a machine-readable form and handed to
+    /// `on_progress` line by line, so the caller can draw its own bars. yt-dlp's own
+    /// bar is never used: it cannot be rendered sanely for several parallel
+    /// downloads sharing one terminal.
+    pub async fn download<F>(
         &self,
         url: &Url,
         pref: QualityPref,
         output_template: &str,
-        quiet: bool,
-    ) -> Result<(), ResolveError> {
+        mut on_progress: F,
+    ) -> Result<(), ResolveError>
+    where
+        F: FnMut(&str) + Send,
+    {
+        use tokio::io::{AsyncBufReadExt, BufReader};
+
         let format = format_selector(pref);
-        debug!(%url, %format, output_template, quiet, "invoking yt-dlp for download");
+        debug!(%url, %format, output_template, "invoking yt-dlp for download");
 
-        let mut cmd = tokio::process::Command::new(&self.binary);
-        cmd.args([
-            "--no-warnings",
-            "--no-playlist",
-            "--newline",
-            "-f",
-            &format,
-            "-o",
-            output_template,
-            url.as_str(),
-        ])
-        .stdin(std::process::Stdio::null());
+        let mut child = tokio::process::Command::new(&self.binary)
+            .args([
+                "--no-warnings",
+                "--no-playlist",
+                "--newline",
+                "--progress-delta",
+                "0.4",
+                "--progress-template",
+                PROGRESS_TEMPLATE,
+                "-f",
+                &format,
+                "-o",
+                output_template,
+                url.as_str(),
+            ])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .map_err(|e| {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    ResolveError::YtDlpMissing
+                } else {
+                    ResolveError::Io(e)
+                }
+            })?;
 
-        let to_err = |e: std::io::Error| {
-            if e.kind() == std::io::ErrorKind::NotFound {
-                ResolveError::YtDlpMissing
-            } else {
-                ResolveError::Io(e)
+        let stdout = child.stdout.take().expect("stdout was piped");
+        let stderr = child.stderr.take().expect("stderr was piped");
+
+        // stderr is drained concurrently; leaving it unread would deadlock the
+        // child once the pipe buffer fills on a verbose failure.
+        let stderr_task = tokio::spawn(async move {
+            let mut collected = String::new();
+            let mut lines = BufReader::new(stderr).lines();
+            while let Ok(Some(line)) = lines.next_line().await {
+                collected.push_str(&line);
+                collected.push('\n');
             }
-        };
+            collected
+        });
 
-        if quiet {
-            cmd.arg("--no-progress");
-            let output = cmd.output().await.map_err(to_err)?;
-            if !output.status.success() {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                let message = stderr
-                    .lines()
-                    .find(|l| l.contains("ERROR"))
-                    .unwrap_or_else(|| stderr.trim())
-                    .to_string();
-                return Err(ResolveError::YtDlp(message));
-            }
-            return Ok(());
+        let mut lines = BufReader::new(stdout).lines();
+        while let Some(line) = lines.next_line().await.map_err(ResolveError::Io)? {
+            on_progress(&line);
         }
 
-        let status = cmd.status().await.map_err(to_err)?;
+        let status = child.wait().await.map_err(ResolveError::Io)?;
+        let stderr = stderr_task.await.unwrap_or_default();
+
         if !status.success() {
-            return Err(ResolveError::YtDlp(format!(
-                "yt-dlp exited with status {}",
-                status.code().unwrap_or(-1)
-            )));
+            let message = stderr
+                .lines()
+                .find(|l| l.contains("ERROR"))
+                .map(str::to_string)
+                .unwrap_or_else(|| {
+                    format!("yt-dlp exited with status {}", status.code().unwrap_or(-1))
+                });
+            return Err(ResolveError::YtDlp(message));
         }
         Ok(())
     }

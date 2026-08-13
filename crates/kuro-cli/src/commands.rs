@@ -21,7 +21,7 @@ fn joined(parts: &[String]) -> String {
 }
 
 /// Search every active provider, ranked, recording health along the way.
-async fn search_ranked(app: &mut App, query: &str) -> Result<Vec<Series>> {
+pub(crate) async fn search_ranked(app: &mut App, query: &str) -> Result<Vec<Series>> {
     let providers = app.active_providers();
     if providers.is_empty() {
         anyhow::bail!(
@@ -107,7 +107,7 @@ fn episodes_for_spec(episodes: &[Episode], spec: EpisodeSpec) -> Result<Vec<&Epi
     Ok(picked)
 }
 
-fn provider_for(app: &App, series: &Series) -> Result<Arc<dyn Provider>> {
+pub(crate) fn provider_for(app: &App, series: &Series) -> Result<Arc<dyn Provider>> {
     app.provider(series.provider_id.as_str())
         .with_context(|| format!("provider `{}` is not loaded", series.provider_id))
 }
@@ -150,17 +150,17 @@ fn print_series_list(series: &[Series]) {
             .map(|y| format!(" ({y})"))
             .unwrap_or_default();
         println!(
-            "{:>3}. {}{}  \x1b[2m[{}]\x1b[0m",
+            "{:>3}. {}{}  {}",
             i + 1,
             s.title,
             year,
-            s.provider_id
+            crate::ui::dim(format!("[{}]", s.provider_id))
         );
     }
 }
 
 /// Fetch episodes, converting provider failure into an actionable message.
-async fn episodes_of(
+pub(crate) async fn episodes_of(
     app: &mut App,
     provider: &Arc<dyn Provider>,
     series: &Series,
@@ -412,82 +412,111 @@ pub async fn download(
     std::fs::create_dir_all(out)
         .with_context(|| format!("creating output directory {}", out.display()))?;
 
-    let mut failed = Vec::new();
+    download_episodes(
+        app,
+        &chosen,
+        &provider,
+        &wanted,
+        mirror.as_deref(),
+        out,
+        jobs,
+    )
+    .await
+}
 
-    // Mirror resolution needs `&mut App` for health tracking, so it happens up
-    // front; only the downloads themselves run in parallel. Resolution is cheap
-    // next to a download, and pages are cached.
-    eprintln!("Resolving {} episode(s)…", wanted.len());
+/// Download a set of episodes, drawing a progress bar per episode.
+///
+/// Mirror resolution needs `&mut App` for health tracking, so it happens up front;
+/// only the downloads themselves run in parallel. Resolution is cheap next to a
+/// download, and pages are cached.
+pub async fn download_episodes(
+    app: &mut App,
+    series: &Series,
+    provider: &Arc<dyn Provider>,
+    wanted: &[Episode],
+    mirror: Option<&str>,
+    out: &std::path::Path,
+    jobs: usize,
+) -> Result<()> {
+    let ytdlp = kuro_resolver::ytdlp::YtDlpResolver::default();
+    if !ytdlp.is_available().await {
+        anyhow::bail!("yt-dlp is required for downloads — install it with: brew install yt-dlp");
+    }
+
+    std::fs::create_dir_all(out)
+        .with_context(|| format!("creating output directory {}", out.display()))?;
+
+    let mut failed = Vec::new();
     let mut ready = Vec::new();
 
-    for episode in &wanted {
-        match crate::playback::ordered_mirrors(app, &provider, episode, mirror.as_deref()).await {
+    let spinner = crate::ui::Spinner::start(format!("Resolving {} episode(s)…", wanted.len()));
+    for episode in wanted {
+        match crate::playback::ordered_mirrors(app, provider, episode, mirror).await {
             Ok(mirrors) => ready.push((episode.clone(), mirrors)),
-            Err(e) => {
-                eprintln!(
-                    "  \x1b[31m✗\x1b[0m Episode {}: {e}",
-                    episode.number_label()
-                );
-                failed.push(episode.number_label());
-            }
+            Err(_) => failed.push(episode.number_label()),
         }
     }
+    spinner.clear().await;
 
-    let concurrency = jobs.max(1);
-    // With more than one download in flight, yt-dlp's progress bars would overwrite
-    // each other, so they are silenced and replaced with per-episode lines.
-    let quiet = concurrency > 1;
-    if quiet {
-        eprintln!("Downloading {} episode(s), {concurrency} at a time…", ready.len());
+    if ready.is_empty() {
+        anyhow::bail!("no episode could be resolved to a mirror");
     }
 
-    let limiter = Arc::new(tokio::sync::Semaphore::new(concurrency));
+    eprintln!("Downloading {} episode(s) → {}", ready.len(), out.display());
+
+    let labels: Vec<String> = ready
+        .iter()
+        .map(|(e, _)| format!("E{}", e.number_label()))
+        .collect();
+    let display = crate::ui::ProgressHandle::start(labels);
+
+    let limiter = Arc::new(tokio::sync::Semaphore::new(jobs.max(1)));
     let ytdlp = Arc::new(ytdlp);
     let quality = app.quality;
-    let series_title = chosen.title.clone();
+    let series_title = series.title.clone();
 
-    let tasks = ready.into_iter().map(|(episode, mirrors)| {
-        let limiter = Arc::clone(&limiter);
-        let ytdlp = Arc::clone(&ytdlp);
-        let out = out.to_path_buf();
-        let series_title = series_title.clone();
+    let tasks = ready
+        .into_iter()
+        .enumerate()
+        .map(|(slot, (episode, mirrors))| {
+            let limiter = Arc::clone(&limiter);
+            let ytdlp = Arc::clone(&ytdlp);
+            let out = out.to_path_buf();
+            let series_title = series_title.clone();
+            let progress = display.handle();
 
-        async move {
-            let _permit = limiter.acquire().await.expect("semaphore is never closed");
-            let label = episode.number_label();
+            async move {
+                let _permit = limiter.acquire().await.expect("semaphore is never closed");
+                let label = episode.number_label();
 
-            // `%(ext)s` is a yt-dlp placeholder — it fills in the real container.
-            let filename = format!("{} - E{label}.%(ext)s", safe_filename(&series_title));
-            let template = out.join(filename).display().to_string();
+                // `%(ext)s` is a yt-dlp placeholder — it fills in the real container.
+                let filename = format!("{} - E{label}.%(ext)s", safe_filename(&series_title));
+                let template = out.join(filename).display().to_string();
 
-            if quiet {
-                eprintln!("  ↓ Episode {label}");
-            }
+                let mut errors = Vec::new();
+                for m in &mirrors {
+                    let result = ytdlp
+                        .download(&m.embed, quality, &template, |line| {
+                            progress.apply_ytdlp_line(slot, line);
+                        })
+                        .await;
 
-            // Try each mirror in turn, exactly as playback does.
-            let mut errors = Vec::new();
-            for m in &mirrors {
-                if !quiet {
-                    eprintln!("\n  Episode {label} — downloading from {} …", m.label);
-                }
-                match ytdlp.download(&m.embed, quality, &template, quiet).await {
-                    Ok(()) => {
-                        eprintln!("  \x1b[32m✓\x1b[0m Episode {label}");
-                        return None;
+                    match result {
+                        Ok(()) => {
+                            progress.finish(slot, true, None);
+                            return None;
+                        }
+                        Err(e) => errors.push(format!("{}: {e}", m.label)),
                     }
-                    Err(e) => errors.push(format!("{}: {e}", m.label)),
                 }
-            }
 
-            eprintln!(
-                "  \x1b[31m✗\x1b[0m Episode {label} — {}",
-                errors.join("; ")
-            );
-            Some(label)
-        }
-    });
+                progress.finish(slot, false, errors.last().cloned());
+                Some(label)
+            }
+        });
 
     failed.extend(futures::future::join_all(tasks).await.into_iter().flatten());
+    display.finish().await;
 
     if failed.is_empty() {
         eprintln!("\n\x1b[32mDone.\x1b[0m Saved to {}", out.display());
@@ -617,11 +646,11 @@ pub fn list(app: &App, limit: usize, clear: bool) -> Result<()> {
             None => String::new(),
         };
         println!(
-            "{mark} {}  Episode {}{}  \x1b[2m{}\x1b[0m",
+            "{mark} {}  Episode {}{}  {}",
             entry.series_title,
             entry.episode,
             progress,
-            entry.watched_at.format("%Y-%m-%d %H:%M")
+            crate::ui::dim(entry.watched_at.format("%Y-%m-%d %H:%M").to_string())
         );
     }
     Ok(())

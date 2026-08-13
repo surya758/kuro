@@ -81,11 +81,17 @@ impl std::str::FromStr for EpisodeSpec {
     name = "kuro",
     about = "Terminal anime streaming — scrapes pluggable providers, plays in IINA",
     version,
-    propagate_version = true
+    propagate_version = true,
+    // Lets `kuro <query>` work as a shorthand while keeping subcommands unambiguous.
+    args_conflicts_with_subcommands = true
 )]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Option<Command>,
+
+    /// Search query. `kuro against the gods` opens the interactive browser.
+    #[arg(value_name = "QUERY")]
+    pub query: Vec<String>,
 
     /// Restrict the run to a single provider.
     #[arg(long, short, global = true, env = "KURO_PROVIDER")]

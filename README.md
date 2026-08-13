@@ -24,6 +24,7 @@ $ kuro play "martial god asura season 2" --ep 15
 
 - [Install](#install)
 - [Usage](#usage)
+  - [Command map](#command-map)
 - [Providers](#providers)
   - [Adding a site](#adding-a-site)
 - [Configuration](#configuration)
@@ -87,15 +88,40 @@ macOS only.
 
 ## Usage
 
-Run `kuro` with no arguments for the interactive browser — search, pick a series,
-pick an episode, play. Vim keys throughout (`j`/`k` move, `Enter` select, `Esc`
-back, `/` search, `p` providers, `space` toggles a provider, `q` quits).
+Just type what you want to watch:
 
-Or drive it directly:
+```
+$ kuro against the gods
+⠋ Searching 2 provider(s)… 1.3s
+Found 4 result(s) 1.3s
+
+Results for “against the gods”
+▸  1. Against the Gods    luciferdonghua
+   2. Against the Gods    donghuastream
+↑↓ move · ⏎ select · q back
+```
+
+Picking a series lists its episodes (marked `watched` / `resume 12:04`), and picking
+an episode opens:
+
+```
+Against the Gods · Episode 3
+▸  1. ▶  Play
+   2. ⬇  Download this episode
+   3. ⬇  Download a range…
+   4. ⚙  Quality              1080p
+   5. ☆  Bookmark series
+   6. ←  Back to episodes
+```
+
+After playback it offers the next episode, a replay, or back to the list. `q` or
+`Esc` steps back a level rather than quitting, so a wrong pick costs nothing.
+
+Bare `kuro` opens the full-screen TUI instead. Every step is scriptable too —
+piping or `--json` skips the menus entirely:
 
 ```sh
-kuro search <query>                       # search all enabled providers
-kuro watch  <query>                       # search, pick series + episode, play
+kuro search <query>                       # interactive; a plain list when piped
 kuro play   <query> --ep 15               # play a specific episode
 kuro play   <query> --ep 1-5              # queue a range, played in order
 kuro play   <query> --ep 15 --quality 720p --mirror dailymotion
@@ -124,6 +150,19 @@ launch nothing), `--no-cache`, `-v`/`-vv` for logs.
 
 Scraped pages are cached on disk, so a repeated search is near-instant. `kuro cache
 status` shows where and how much; `kuro cache clear` empties it.
+
+### Command map
+
+```
+kuro                       full-screen TUI
+kuro <query>               interactive browse  ← search · pick · play/download
+kuro search <query>        same; plain list when piped or --json
+kuro play <q> --ep 15      direct, no prompts
+kuro download <q> --all    direct, no prompts
+kuro next | continue       resume from watch history
+kuro list | bookmark       history and follows
+kuro provider | config | cache | doctor
+```
 
 ## Providers
 
@@ -220,7 +259,7 @@ Page JavaScript is never executed, which sidesteps the anti-bot layer entirely.
 ## Development
 
 ```sh
-cargo test                # 94 tests, all offline
+cargo test                # 100 tests, all offline
 cargo run -- search foo
 ```
 

@@ -237,7 +237,10 @@ mod tests {
             clean_title("Martial Universe [Wu Dong Qian Kun]"),
             "Martial Universe"
         );
-        assert_eq!(clean_title("Wu Ni [Martial Inverse] Anime (2024)"), "Wu Ni Anime");
+        assert_eq!(
+            clean_title("Wu Ni [Martial Inverse] Anime (2024)"),
+            "Wu Ni Anime"
+        );
     }
 
     #[test]
@@ -283,15 +286,30 @@ mod tests {
 
     #[test]
     fn backwards_or_empty_intervals_are_rejected() {
-        assert!(!Interval { start: 100.0, end: 50.0 }.is_usable());
-        assert!(!Interval { start: 10.0, end: 10.0 }.is_usable());
-        assert!(Interval { start: 0.0, end: 90.0 }.is_usable());
+        assert!(!Interval {
+            start: 100.0,
+            end: 50.0
+        }
+        .is_usable());
+        assert!(!Interval {
+            start: 10.0,
+            end: 10.0
+        }
+        .is_usable());
+        assert!(Interval {
+            start: 0.0,
+            end: 90.0
+        }
+        .is_usable());
     }
 
     #[test]
     fn describe_reads_as_clock_times() {
         let times = SkipTimes {
-            op: Some(Interval { start: 0.0, end: 128.0 }),
+            op: Some(Interval {
+                start: 0.0,
+                end: 128.0,
+            }),
             ed: None,
         };
         assert_eq!(times.describe(), "opening 0:00–2:08");

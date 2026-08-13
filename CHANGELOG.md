@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.2.0
+
+### Added
+
+- **Interactive browsing.** `kuro <query>` searches, then lets you pick a series and
+  episode with arrow keys and act on it — play, download the episode, download a
+  range, change quality, or bookmark. After playback it offers the next episode.
+  `q`/`Esc` steps back a level instead of exiting.
+- **Activity indicator.** A spinner with elapsed time while searching, loading
+  episodes and resolving mirrors, so long scrapes no longer look like a hang.
+- **Download progress bars.** One row per episode with percentage, speed and ETA,
+  driven by yt-dlp's machine-readable progress output. Works at any `-j`.
+- **Quality selection** from inside the flow, not just `--quality`.
+
+### Changed
+
+- `kuro search` no longer dead-ends at a printed list; at a terminal it opens the
+  browse flow. Piped or with `--json` it still prints a plain list.
+- Colour is omitted when stdout is redirected, so piped output stays parseable.
+
+### Fixed
+
+- `--mirror` was ignored by `kuro download`.
+
 ## v0.1.1
 
 ### Added

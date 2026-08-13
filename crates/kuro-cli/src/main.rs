@@ -3,8 +3,10 @@
 mod app;
 mod cli;
 mod commands;
+mod flow;
 mod playback;
 mod tui;
+mod ui;
 
 use anyhow::Result;
 use app::App;
@@ -66,6 +68,11 @@ async fn run(cli: Cli) -> Result<()> {
     )?;
 
     match &cli.command {
+        // At a terminal, searching leads somewhere: results become a browsable
+        // list. Piped or `--json`, it stays a plain printable list.
+        Some(Command::Search { query }) if ui::interactive() && !app.json => {
+            flow::run(&mut app, &query.join(" ")).await
+        }
         Some(Command::Search { query }) => commands::search(&mut app, query).await,
         Some(Command::Watch { query }) => commands::watch(&mut app, query).await,
         Some(Command::Play { query, ep, mirror }) => {
@@ -89,6 +96,8 @@ async fn run(cli: Cli) -> Result<()> {
         Some(Command::Doctor) => commands::doctor(&mut app).await,
         Some(Command::Completions { .. }) => unreachable!("handled above"),
 
+        // `kuro <query>` is shorthand for the browse flow; bare `kuro` opens the TUI.
+        None if !cli.query.is_empty() => flow::run(&mut app, &cli.query.join(" ")).await,
         None => tui::run(&mut app).await,
     }
 }
