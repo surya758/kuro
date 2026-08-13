@@ -17,6 +17,8 @@ pub struct App {
     pub resolver: ResolverChain,
     pub quality: QualityPref,
     pub provider_filter: Option<String>,
+    /// `--select-nth`: pick the Nth search result rather than the best match.
+    pub select_nth: Option<usize>,
     pub json: bool,
     pub dry_run: bool,
 }
@@ -25,6 +27,7 @@ impl App {
     pub fn new(
         provider_filter: Option<String>,
         quality_override: Option<QualityPref>,
+        select_nth: Option<usize>,
         json: bool,
         dry_run: bool,
         no_cache: bool,
@@ -55,6 +58,7 @@ impl App {
             resolver: ResolverChain::default(),
             quality,
             provider_filter,
+            select_nth,
             json,
             dry_run,
         })

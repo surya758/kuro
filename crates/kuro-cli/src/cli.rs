@@ -3,6 +3,79 @@
 use clap::{Parser, Subcommand};
 use kuro_core::QualityPref;
 
+/// Which episodes a command should act on.
+///
+/// Borrowed from `ani-cli`, whose `-e 5` / `-r 1-5` split turns out to be the
+/// natural shape here too: one episode to watch, a range to queue or download.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum EpisodeSpec {
+    Single(f32),
+    Range(f32, f32),
+}
+
+impl EpisodeSpec {
+    /// Episodes from `available` that this spec selects, in ascending order.
+    pub fn select<'a>(&self, available: &'a [f32]) -> Vec<&'a f32> {
+        match self {
+            Self::Single(n) => available
+                .iter()
+                .filter(|e| (**e - *n).abs() < f32::EPSILON)
+                .collect(),
+            Self::Range(lo, hi) => available
+                .iter()
+                .filter(|e| **e >= *lo && **e <= *hi)
+                .collect(),
+        }
+    }
+}
+
+impl std::fmt::Display for EpisodeSpec {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Single(n) => write!(f, "{n}"),
+            Self::Range(lo, hi) => write!(f, "{lo}-{hi}"),
+        }
+    }
+}
+
+impl std::str::FromStr for EpisodeSpec {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let s = s.trim();
+        if s.is_empty() {
+            return Err("empty episode spec".to_string());
+        }
+
+        // Split on the first `-` that isn't leading, so `1-5` is a range while a
+        // bare `12.5` stays a single episode. Indexed by char boundary rather than
+        // byte, so junk input cannot panic here.
+        let separator = s
+            .char_indices()
+            .skip(1)
+            .find(|(_, c)| *c == '-')
+            .map(|(i, _)| i);
+
+        if let Some(idx) = separator {
+            let (lo, hi) = (s[..idx].trim(), s[idx + 1..].trim());
+            let lo: f32 = lo
+                .parse()
+                .map_err(|_| format!("`{lo}` is not an episode number"))?;
+            let hi: f32 = hi
+                .parse()
+                .map_err(|_| format!("`{hi}` is not an episode number"))?;
+            if hi < lo {
+                return Err(format!("range {lo}-{hi} runs backwards"));
+            }
+            return Ok(Self::Range(lo, hi));
+        }
+
+        s.parse()
+            .map(Self::Single)
+            .map_err(|_| format!("`{s}` is not an episode number or range like 1-5"))
+    }
+}
+
 #[derive(Parser, Debug)]
 #[command(
     name = "kuro",
@@ -15,12 +88,16 @@ pub struct Cli {
     pub command: Option<Command>,
 
     /// Restrict the run to a single provider.
-    #[arg(long, short, global = true)]
+    #[arg(long, short, global = true, env = "KURO_PROVIDER")]
     pub provider: Option<String>,
 
     /// Override the configured quality (best/worst/2160p/1080p/720p/480p/360p).
-    #[arg(long, short, global = true)]
+    #[arg(long, short, global = true, env = "KURO_QUALITY")]
     pub quality: Option<QualityPref>,
+
+    /// Pick the Nth search result (1-based) instead of the best match.
+    #[arg(long, short = 'S', global = true, value_name = "N")]
+    pub select_nth: Option<usize>,
 
     /// Emit machine-readable JSON instead of formatted text.
     #[arg(long, global = true)]
@@ -51,13 +128,13 @@ pub enum Command {
         query: Vec<String>,
     },
 
-    /// Play a specific episode of the best-matching series.
+    /// Play an episode, or queue a range, of the best-matching series.
     Play {
         query: Vec<String>,
 
-        /// Episode number.
-        #[arg(long, short = 'e')]
-        ep: Option<f32>,
+        /// Episode number or range, e.g. `15` or `1-5`. A range plays in order.
+        #[arg(long, short = 'e', value_name = "SPEC")]
+        ep: Option<EpisodeSpec>,
 
         /// Prefer a specific embed host, e.g. `rumble`.
         #[arg(long, short = 'm')]
@@ -68,9 +145,9 @@ pub enum Command {
     Download {
         query: Vec<String>,
 
-        /// Episode number.
-        #[arg(long, short = 'e')]
-        ep: Option<f32>,
+        /// Episode number or range, e.g. `15` or `1-5`.
+        #[arg(long, short = 'e', value_name = "SPEC")]
+        ep: Option<EpisodeSpec>,
 
         /// Download every episode of the series.
         #[arg(long, conflicts_with = "ep")]
@@ -97,6 +174,10 @@ pub enum Command {
         /// Maximum entries to show.
         #[arg(long, default_value_t = 20)]
         limit: usize,
+
+        /// Erase the watch history instead of showing it.
+        #[arg(long)]
+        clear: bool,
     },
 
     /// Manage followed series.
@@ -169,4 +250,60 @@ pub enum ConfigAction {
     Show,
     /// Write a fully-populated config file if none exists.
     Init,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::str::FromStr;
+
+    fn spec(s: &str) -> EpisodeSpec {
+        EpisodeSpec::from_str(s).expect("valid spec")
+    }
+
+    #[test]
+    fn parses_a_single_episode() {
+        assert_eq!(spec("15"), EpisodeSpec::Single(15.0));
+        assert_eq!(spec(" 7 "), EpisodeSpec::Single(7.0));
+    }
+
+    #[test]
+    fn parses_a_decimal_episode_rather_than_a_range() {
+        // Specials are numbered like 12.5; the dot must not be read as a range.
+        assert_eq!(spec("12.5"), EpisodeSpec::Single(12.5));
+    }
+
+    #[test]
+    fn parses_a_range() {
+        assert_eq!(spec("1-5"), EpisodeSpec::Range(1.0, 5.0));
+        assert_eq!(spec("10 - 12"), EpisodeSpec::Range(10.0, 12.0));
+    }
+
+    #[test]
+    fn rejects_nonsense() {
+        assert!(EpisodeSpec::from_str("").is_err());
+        assert!(EpisodeSpec::from_str("abc").is_err());
+        assert!(EpisodeSpec::from_str("1-x").is_err());
+        // A backwards range is a typo, not an empty selection.
+        assert!(EpisodeSpec::from_str("9-2").is_err());
+    }
+
+    #[test]
+    fn rejects_multibyte_junk_without_panicking() {
+        assert!(EpisodeSpec::from_str("第1話").is_err());
+        assert!(EpisodeSpec::from_str("—").is_err());
+    }
+
+    #[test]
+    fn selects_matching_episodes_only() {
+        let available = [1.0, 2.0, 3.0, 4.0, 5.0, 12.5];
+
+        assert_eq!(spec("3").select(&available), vec![&3.0]);
+        assert_eq!(spec("2-4").select(&available), vec![&2.0, &3.0, &4.0]);
+        assert_eq!(spec("12.5").select(&available), vec![&12.5]);
+
+        // A range that overshoots yields what exists, not an error.
+        assert_eq!(spec("4-99").select(&available), vec![&4.0, &5.0, &12.5]);
+        assert!(spec("50").select(&available).is_empty());
+    }
 }

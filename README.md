@@ -30,10 +30,11 @@ cargo install --path crates/kuro-cli      # installs `kuro` to ~/.cargo/bin
 kuro doctor                               # verify everything is wired up
 ```
 
-Or via Homebrew, once the repo is published:
+Or via Homebrew, once the repo and its tap are published:
 
 ```sh
-brew install --HEAD suryakant/kuro/kuro
+brew tap suryakant/tap
+brew install kuro
 ```
 
 Needs Rust 1.75+ and macOS. `kuro completions zsh > ~/.zfunc/_kuro` for tab
@@ -51,19 +52,25 @@ Or drive it directly:
 kuro search <query>                       # search all enabled providers
 kuro watch  <query>                       # search, pick series + episode, play
 kuro play   <query> --ep 15               # play a specific episode
+kuro play   <query> --ep 1-5              # queue a range, played in order
 kuro play   <query> --ep 15 --quality 720p --mirror dailymotion
 kuro next                                 # next unwatched episode
 kuro continue                             # resume where you stopped
-kuro list                                 # watch history
+kuro list                                 # watch history (--clear to erase)
 kuro bookmark add <query>                 # follow a series
 
 kuro download <query> --ep 15 -o ~/Anime  # save instead of stream
+kuro download <query> --ep 1-5 -o ~/Anime # a range
 kuro download <query> --all -o ~/Anime    # the whole series
 ```
 
-Global flags: `--provider <id>`, `--quality <best|1080p|720p|…>`, `--json`,
-`--dry-run` (print the resolved stream URL and player command, launch nothing),
-`--no-cache`, `-v`/`-vv` for logs.
+Global flags: `--provider <id>`, `--quality <best|1080p|720p|…>`,
+`-S/--select-nth N` (take the Nth search result instead of the best match, for
+scripting), `--json`, `--dry-run` (print the resolved stream URL and player command,
+launch nothing), `--no-cache`, `-v`/`-vv` for logs.
+
+`KURO_QUALITY` and `KURO_PROVIDER` set the defaults for `--quality` and
+`--provider`.
 
 Scraped pages are cached on disk, so a repeated search is near-instant. `kuro cache
 status` shows where and how much; `kuro cache clear` empties it.
@@ -163,7 +170,7 @@ Page JavaScript is never executed, which sidesteps the anti-bot layer entirely.
 ## Development
 
 ```sh
-cargo test                # 78 tests, all offline
+cargo test                # 84 tests, all offline
 cargo run -- search foo
 ```
 

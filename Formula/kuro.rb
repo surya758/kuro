@@ -1,19 +1,20 @@
 # Homebrew formula for kuro.
 #
-# Until the first tagged release exists there is no source tarball to check a
-# sha256 against, so this ships a `head` spec only and installs with:
+# Lives in the tap repo `suryakant/homebrew-tap`, which Homebrew refers to as
+# `suryakant/tap`. Install with either:
 #
-#     brew install --HEAD suryakant/kuro/kuro
+#     brew tap suryakant/tap && brew install kuro      # then just `kuro`
+#     brew install suryakant/tap/kuro                  # one-liner
 #
-# At first release, add a stable stanza above `head`:
-#
-#     url "https://github.com/suryakant/kuro/archive/refs/tags/v0.1.0.tar.gz"
-#     sha256 "<shasum -a 256 of that tarball>"
-#
-# and users can then `brew install suryakant/kuro/kuro` without --HEAD.
+# The stable spec pins a git tag plus its revision rather than a release tarball,
+# so no sha256 is needed and no GitHub release has to exist. When cutting a new
+# version, bump both `tag` and `revision` together.
 class Kuro < Formula
   desc "Terminal anime streaming client that plays in IINA"
   homepage "https://github.com/suryakant/kuro"
+  url "https://github.com/suryakant/kuro.git",
+      tag:      "v0.1.0",
+      revision: "26b68933575a30d31f41628e5dec39df6d2e1965"
   license "MIT"
   head "https://github.com/suryakant/kuro.git", branch: "main"
 
@@ -29,7 +30,7 @@ class Kuro < Formula
 
   def caveats
     <<~EOS
-      kuro plays video through IINA, which is not installable as a formula:
+      kuro plays video through IINA, which is a cask rather than a formula:
 
         brew install --cask iina
 
@@ -40,8 +41,8 @@ class Kuro < Formula
   test do
     assert_match "kuro", shell_output("#{bin}/kuro --version")
 
-    # Providers are compiled into the binary, so this works with no network
-    # access and no config file present.
+    # Providers are compiled into the binary, so this needs no network access
+    # and no config file.
     assert_match "luciferdonghua", shell_output("#{bin}/kuro provider list")
   end
 end

@@ -1,7 +1,7 @@
 //! Command implementations.
 
 use crate::app::App;
-use crate::cli::{BookmarkAction, CacheAction, ConfigAction, ProviderAction};
+use crate::cli::{BookmarkAction, CacheAction, ConfigAction, EpisodeSpec, ProviderAction};
 use crate::playback::{play, PlayRequest};
 use anyhow::{Context, Result};
 use kuro_core::{orchestrator, Episode, Provider, Series, SeriesStatus};
@@ -65,6 +65,43 @@ async fn search_ranked(app: &mut App, query: &str) -> Result<Vec<Series>> {
     let config = &app.config;
     orchestrator::rank(&mut series, query, |id| config.priority(id.as_str()));
     Ok(series)
+}
+
+/// Choose one result: the Nth when `--select-nth` was given, else the best match.
+fn pick_result(app: &App, results: &[Series], query: &str) -> Result<Series> {
+    if results.is_empty() {
+        anyhow::bail!("no results for `{query}`");
+    }
+
+    match app.select_nth {
+        None => Ok(results[0].clone()),
+        Some(n) => {
+            // 1-based, matching how results are printed.
+            let index = n
+                .checked_sub(1)
+                .context("--select-nth is 1-based; 0 is not a result")?;
+            results.get(index).cloned().with_context(|| {
+                format!("--select-nth {n} is out of range ({} result(s))", results.len())
+            })
+        }
+    }
+}
+
+/// Episodes selected by a spec, erroring with the available range when empty.
+fn episodes_for_spec<'a>(episodes: &'a [Episode], spec: EpisodeSpec) -> Result<Vec<&'a Episode>> {
+    let picked: Vec<&Episode> = episodes
+        .iter()
+        .filter(|e| !spec.select(&[e.number]).is_empty())
+        .collect();
+
+    if picked.is_empty() {
+        let available = match (episodes.first(), episodes.last()) {
+            (Some(f), Some(l)) => format!("{} – {}", f.number_label(), l.number_label()),
+            _ => "none".to_string(),
+        };
+        anyhow::bail!("no episode matches `{spec}` (available: {available})");
+    }
+    Ok(picked)
 }
 
 fn provider_for(app: &App, series: &Series) -> Result<Arc<dyn Provider>> {
@@ -252,56 +289,72 @@ pub async fn watch(app: &mut App, query: &[String]) -> Result<()> {
 pub async fn play_cmd(
     app: &mut App,
     query: &[String],
-    ep: Option<f32>,
+    ep: Option<EpisodeSpec>,
     mirror: Option<String>,
 ) -> Result<()> {
     let query = joined(query);
-    let series = search_ranked(app, &query).await?;
-    let chosen = series
-        .first()
-        .with_context(|| format!("no results for `{query}`"))?
-        .clone();
+    let results = search_ranked(app, &query).await?;
+    let chosen = pick_result(app, &results, &query)?;
 
     eprintln!("→ {} [{}]", chosen.title, chosen.provider_id);
 
     let provider = provider_for(app, &chosen)?;
     let episodes = episodes_of(app, &provider, &chosen).await?;
 
-    let episode = match ep {
-        Some(n) => pick_episode(&episodes, n)?.clone(),
+    let queue: Vec<Episode> = match ep {
+        Some(spec) => episodes_for_spec(&episodes, spec)?
+            .into_iter()
+            .cloned()
+            .collect(),
         None => {
             // No episode given: continue where this series left off.
             let history = app.history()?;
             let next = history
                 .last_completed_episode(chosen.provider_id.as_str(), &chosen.id)
-                .and_then(|last| {
-                    episodes.iter().find(|e| e.number > last).cloned()
-                });
-            match next {
+                .and_then(|last| episodes.iter().find(|e| e.number > last).cloned());
+
+            vec![match next {
                 Some(e) => e,
                 None => episodes
                     .first()
                     .context("this series has no episodes")?
                     .clone(),
-            }
+            }]
         }
     };
 
-    let start = app
-        .history()?
-        .resume_position(chosen.provider_id.as_str(), &chosen.id, episode.number);
+    if queue.len() > 1 {
+        eprintln!("  queued {} episodes", queue.len());
+    }
 
-    play(
-        app,
-        PlayRequest {
-            provider,
-            series: &chosen,
-            episode: &episode,
-            mirror,
-            start_secs: start,
-        },
-    )
-    .await
+    for (i, episode) in queue.iter().enumerate() {
+        if queue.len() > 1 {
+            eprintln!(
+                "\n[{}/{}] Episode {}",
+                i + 1,
+                queue.len(),
+                episode.number_label()
+            );
+        }
+
+        let start = app
+            .history()?
+            .resume_position(chosen.provider_id.as_str(), &chosen.id, episode.number);
+
+        play(
+            app,
+            PlayRequest {
+                provider: Arc::clone(&provider),
+                series: &chosen,
+                episode,
+                mirror: mirror.clone(),
+                start_secs: start,
+            },
+        )
+        .await?;
+    }
+
+    Ok(())
 }
 
 /// Strip characters that are awkward or illegal in filenames.
@@ -321,7 +374,7 @@ fn safe_filename(s: &str) -> String {
 pub async fn download(
     app: &mut App,
     query: &[String],
-    ep: Option<f32>,
+    ep: Option<EpisodeSpec>,
     all: bool,
     mirror: Option<String>,
     out: &std::path::Path,
@@ -332,11 +385,8 @@ pub async fn download(
     }
 
     let query = joined(query);
-    let series = search_ranked(app, &query).await?;
-    let chosen = series
-        .first()
-        .with_context(|| format!("no results for `{query}`"))?
-        .clone();
+    let results = search_ranked(app, &query).await?;
+    let chosen = pick_result(app, &results, &query)?;
 
     eprintln!("→ {} [{}]", chosen.title, chosen.provider_id);
 
@@ -346,8 +396,13 @@ pub async fn download(
     let wanted: Vec<Episode> = if all {
         episodes.clone()
     } else {
-        let number = ep.context("give an episode with --ep N, or --all for the whole series")?;
-        vec![pick_episode(&episodes, number)?.clone()]
+        let spec = ep.context(
+            "give an episode with --ep 15, a range with --ep 1-5, or --all for the series",
+        )?;
+        episodes_for_spec(&episodes, spec)?
+            .into_iter()
+            .cloned()
+            .collect()
     };
 
     std::fs::create_dir_all(out)
@@ -497,8 +552,16 @@ fn format_hms(secs: u64) -> String {
     }
 }
 
-pub fn list(app: &App, limit: usize) -> Result<()> {
-    let history = History::load(&app.paths).context("loading watch history")?;
+pub fn list(app: &App, limit: usize, clear: bool) -> Result<()> {
+    let mut history = History::load(&app.paths).context("loading watch history")?;
+
+    if clear {
+        let count = history.entries.len();
+        history.entries.clear();
+        history.save(&app.paths).context("clearing watch history")?;
+        println!("Cleared {count} history entr{}.", if count == 1 { "y" } else { "ies" });
+        return Ok(());
+    }
 
     if app.json {
         println!("{}", serde_json::to_string_pretty(&history.entries)?);
