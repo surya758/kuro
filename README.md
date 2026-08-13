@@ -3,22 +3,46 @@
 Terminal anime/donghua streaming for macOS. Searches multiple provider sites,
 resolves a real stream, and plays it in [IINA](https://iina.io).
 
+[![CI](https://github.com/surya758/kuro/actions/workflows/ci.yml/badge.svg)](https://github.com/surya758/kuro/actions/workflows/ci.yml)
+[![Release](https://img.shields.io/github/v/release/surya758/kuro?color=blue)](https://github.com/surya758/kuro/releases/latest)
+[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 Anime sites go down constantly, so every site is a separate scraper behind a toggle,
 selectors live in config rather than code, and a provider that keeps failing takes
 itself out of rotation until it recovers.
 
-```
-$ kuro search martial god asura
-  1. Martial God Asura              [donghuastream]
-  2. Martial God Asura (2023)       [luciferdonghua]
-  3. Martial God Asura Season 2     [donghuastream]
+Type what you want to watch:
 
-$ kuro play "martial god asura season 2" --ep 15
-→ Martial God Asura Season 2 [luciferdonghua]
-  found 5 mirror(s), resolving…
-  trying Rumble …
-▶  Martial God Asura Season 2 · Episode 15  [Rumble · 1080p]
 ```
+$ kuro against the gods
+⠋ Searching 2 provider(s)… 1.3s
+Found 10 result(s) 1.3s
+
+Results for “against the gods”
+▸  1. Against the Gods (2023)                 luciferdonghua
+   2. Against the Gods (Ni Tian Xie Shen) 3D  donghuastream
+   3. Against the Gods Season 2               donghuastream
+↑↓ move · ⏎ select · q back
+```
+
+Pick a series, pick an episode, pick what to do with it:
+
+```
+Against the Gods (2023) · Episode 1
+▸  1. ▶  Play
+   2. ⬇  Download this episode
+   3. ⬇  Download a range…
+   4. ⚙  Quality  1080p
+   5. ☆  Bookmark series
+   6. ←  Back to episodes
+↑↓ move · ⏎ select · q back
+```
+
+Watched episodes are marked, part-watched ones show a resume point, and playback
+rolls into the next episode when it ends. `q` steps back a level rather than
+quitting, so a wrong pick costs nothing.
+
+Everything is scriptable too — piping or `--json` skips the menus entirely.
 
 ## Contents
 
@@ -88,37 +112,11 @@ macOS only.
 
 ## Usage
 
-Just type what you want to watch:
+`kuro <query>` opens the browse flow shown above. Bare `kuro` opens the full-screen
+TUI instead.
 
-```
-$ kuro against the gods
-⠋ Searching 2 provider(s)… 1.3s
-Found 4 result(s) 1.3s
-
-Results for “against the gods”
-▸  1. Against the Gods    luciferdonghua
-   2. Against the Gods    donghuastream
-↑↓ move · ⏎ select · q back
-```
-
-Picking a series lists its episodes (marked `watched` / `resume 12:04`), and picking
-an episode opens:
-
-```
-Against the Gods · Episode 3
-▸  1. ▶  Play
-   2. ⬇  Download this episode
-   3. ⬇  Download a range…
-   4. ⚙  Quality              1080p
-   5. ☆  Bookmark series
-   6. ←  Back to episodes
-```
-
-After playback it offers the next episode, a replay, or back to the list. `q` or
-`Esc` steps back a level rather than quitting, so a wrong pick costs nothing.
-
-Bare `kuro` opens the full-screen TUI instead. Every step is scriptable too —
-piping or `--json` skips the menus entirely:
+Every step also works without prompts, for scripting or when you already know what
+you want:
 
 ```sh
 kuro search <query>                       # interactive; a plain list when piped
