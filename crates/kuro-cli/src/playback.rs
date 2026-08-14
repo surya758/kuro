@@ -23,13 +23,13 @@ pub struct ResolvedMirror {
 
 /// Resolve every mirror's embed URL concurrently, discarding ones that fail.
 async fn resolve_embeds(
-    app: &App,
+    ctx: &kuro_core::FetchCtx,
     provider: &Arc<dyn Provider>,
     mirrors: Vec<Mirror>,
 ) -> Vec<ResolvedMirror> {
     let tasks = mirrors.into_iter().map(|mirror| {
         let provider = Arc::clone(provider);
-        let ctx = app.ctx.clone();
+        let ctx = ctx.clone();
         async move {
             match provider.embed_url(&ctx, &mirror).await {
                 Ok(embed) => {
@@ -72,6 +72,9 @@ pub struct PlayRequest<'a> {
     pub episode: &'a Episode,
     /// Explicit `--mirror` host filter.
     pub mirror: Option<String>,
+    /// Episodes after this one, queued into the player playlist so its own
+    /// next/previous controls work part-way through an episode.
+    pub upcoming: &'a [Episode],
     pub start_secs: Option<u64>,
 }
 
@@ -79,11 +82,15 @@ pub struct PlayRequest<'a> {
 ///
 /// Shared by playback and downloading: both need the same "which host should we
 /// try, in what order" answer.
+/// `show_progress` draws a spinner for the embed-resolution step. Downloading
+/// passes `false` because it already runs its own spinner and progress bars, and
+/// two writers competing for the same line garbles both.
 pub async fn ordered_mirrors(
     app: &mut App,
     provider: &Arc<dyn Provider>,
     episode: &Episode,
     mirror_filter: Option<&str>,
+    show_progress: bool,
 ) -> Result<Vec<ResolvedMirror>> {
     let provider_id = provider.id();
 
@@ -103,9 +110,16 @@ pub async fn ordered_mirrors(
         }
     };
 
-    eprintln!("  found {} mirror(s), resolving…", mirrors.len());
+    // Each mirror costs a fetch, so this is the step that visibly stalls.
+    let spinner = show_progress
+        .then(|| crate::ui::Spinner::start(format!("Resolving {} mirror(s)…", mirrors.len())));
 
-    let resolved = resolve_embeds(app, provider, mirrors).await;
+    let resolved = resolve_embeds(&app.ctx, provider, mirrors).await;
+
+    if let Some(spinner) = spinner {
+        spinner.clear().await;
+    }
+
     if resolved.is_empty() {
         anyhow::bail!("no mirror on this episode exposed a usable video embed");
     }
@@ -128,17 +142,22 @@ pub async fn ordered_mirrors(
 }
 
 pub async fn play(app: &mut App, req: PlayRequest<'_>) -> Result<()> {
-    let ordered = ordered_mirrors(app, &req.provider, req.episode, req.mirror.as_deref()).await?;
+    let ordered =
+        ordered_mirrors(app, &req.provider, req.episode, req.mirror.as_deref(), true).await?;
 
     let mut failures = Vec::new();
 
     for mirror in &ordered {
-        eprintln!("  trying {} …", mirror.label);
+        // yt-dlp can sit here for several seconds per host.
+        let spinner = crate::ui::Spinner::start(format!("Trying {}…", mirror.label));
+        let result = app.resolver.resolve(&mirror.embed, app.quality).await;
+        spinner.clear().await;
 
-        let streams = match app.resolver.resolve(&mirror.embed, app.quality).await {
+        let streams = match result {
             Ok(s) => s,
             Err(e) => {
                 warn!(mirror = %mirror.label, error = %e, "resolution failed");
+                eprintln!("  \x1b[2m{} unavailable\x1b[0m", mirror.label);
                 failures.push(format!("{}: {e}", mirror.label));
                 continue;
             }
@@ -153,6 +172,8 @@ pub async fn play(app: &mut App, req: PlayRequest<'_>) -> Result<()> {
             app,
             req.series,
             req.episode,
+            &req.provider,
+            req.upcoming,
             &stream,
             mirror,
             req.start_secs,
@@ -196,10 +217,91 @@ async fn resolve_skip(
     }
 }
 
+/// How many following episodes to queue into the player's playlist.
+///
+/// Small on purpose: each costs a scrape plus a yt-dlp call, and the resulting CDN
+/// URLs are signed and short-lived, so queueing far ahead would hand the player
+/// links that expire before it reaches them.
+const LOOKAHEAD: usize = 2;
+
+/// Resolve the next few episodes and append them to the running player's playlist.
+///
+/// This is what makes the player's own next/previous work part-way through an
+/// episode. It runs on its own task so the current episode starts immediately;
+/// each append lands whenever that episode finishes resolving.
+///
+/// Returns the episodes actually queued, in playlist order after the first.
+fn spawn_lookahead(
+    ctx: kuro_core::FetchCtx,
+    provider: Arc<dyn Provider>,
+    episodes: Vec<Episode>,
+    quality: kuro_core::QualityPref,
+    preference: Vec<String>,
+    socket: std::path::PathBuf,
+) -> tokio::task::JoinHandle<Vec<Episode>> {
+    tokio::spawn(async move {
+        let mut queued = Vec::new();
+        if episodes.is_empty() {
+            return queued;
+        }
+
+        // The socket only exists once the player has started mpv.
+        for _ in 0..60 {
+            if socket.exists() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+        if !socket.exists() {
+            debug!("player IPC socket never appeared; playlist not extended");
+            return queued;
+        }
+
+        let resolver = kuro_resolver::ResolverChain::default();
+
+        for episode in episodes {
+            let Ok(mirrors) = provider.mirrors(&ctx, &episode).await else {
+                break;
+            };
+            let resolved = resolve_embeds(&ctx, &provider, mirrors).await;
+            if resolved.is_empty() {
+                break;
+            }
+
+            let ordered = order_by_preference(resolved, &preference);
+            let mut appended = false;
+
+            for m in &ordered {
+                let Ok(streams) = resolver.resolve(&m.embed, quality).await else {
+                    continue;
+                };
+                let Some(stream) = streams.into_iter().next() else {
+                    continue;
+                };
+                appended = ipc::append_to_playlist(&socket, stream.url.as_str()).await;
+                break;
+            }
+
+            // A gap would make the playlist order lie about which episode is which,
+            // so stop at the first failure rather than skipping one.
+            if !appended {
+                break;
+            }
+            debug!(episode = episode.number, "queued for playback");
+            queued.push(episode);
+        }
+
+        queued
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
 async fn launch(
     app: &mut App,
     series: &Series,
     episode: &Episode,
+    provider: &Arc<dyn Provider>,
+    upcoming: &[Episode],
     stream: &Stream,
     mirror: &ResolvedMirror,
     start_secs: Option<u64>,
@@ -249,40 +351,79 @@ async fn launch(
         .await
         .context("launching the player")?;
 
-    // Track position alongside playback so the session can be resumed later.
     let socket_path = std::path::PathBuf::from(&socket);
+
+    // Queue the next episodes so the player's own next/previous work mid-episode.
+    let lookahead = spawn_lookahead(
+        app.ctx.clone(),
+        Arc::clone(provider),
+        upcoming.iter().take(LOOKAHEAD).cloned().collect(),
+        app.quality,
+        app.config.provider(series.provider_id.as_str()).mirrors,
+        socket_path.clone(),
+    );
+
+    // Track position alongside playback so the session can be resumed later.
     let tracker = tokio::spawn(async move {
-        ipc::track_until_exit(
-            &socket_path,
-            Duration::from_secs(5),
-            Duration::from_secs(30),
-        )
-        .await
+        ipc::track_until_exit(&socket_path, Duration::from_secs(5), Duration::from_secs(30)).await
     });
 
     handle.wait().await.ok();
-    let progress = tracker.await.ok().flatten();
+    let progress = tracker.await.unwrap_or_default();
+    let queued = lookahead.await.unwrap_or_default();
 
     // The socket is ours; leaving it behind would litter the temp directory.
     std::fs::remove_file(&socket).ok();
 
-    if let Some(progress) = progress {
-        let mut history = app.history()?;
+    // Playlist index 0 is the episode we launched; the rest are what the lookahead
+    // appended, in order. Recording per index means skipping ahead in the player
+    // still credits the right episode.
+    let mut history = app.history()?;
+    let mut recorded = 0usize;
+
+    for (index, progress) in progress {
+        let Some(watched) = (if index == 0 {
+            Some(episode)
+        } else {
+            queued.get(index - 1)
+        }) else {
+            continue;
+        };
+
         history.record(
             series.provider_id.as_str(),
             &series.id,
             &series.title,
             series.url.as_str(),
-            episode.number,
+            watched.number,
             progress.position_secs,
             progress.duration_secs,
         );
+        recorded += 1;
+        debug!(
+            episode = watched.number,
+            position = progress.position_secs,
+            "recorded progress"
+        );
+    }
+
+    if recorded > 0 {
         history.save(&app.paths).context("saving watch history")?;
-        debug!(position = progress.position_secs, "recorded progress");
     }
 
     app.save_health().ok();
     Ok(())
+}
+
+/// Episodes following `episode`, for playlist lookahead.
+///
+/// Compared by number rather than index so it behaves the same whether the caller
+/// holds the full episode list or a filtered range.
+pub fn upcoming_after<'a>(episodes: &'a [Episode], episode: &Episode) -> &'a [Episode] {
+    match episodes.iter().position(|e| e.number > episode.number) {
+        Some(i) => &episodes[i..],
+        None => &[],
+    }
 }
 
 #[cfg(test)]

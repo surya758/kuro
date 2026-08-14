@@ -1,10 +1,15 @@
-//! mpv JSON IPC, used to read playback position for resume.
+//! mpv JSON IPC.
 //!
 //! IINA embeds mpv, so `--mpv-input-ipc-server` gives a standard mpv IPC socket.
-//! Position tracking is best-effort by design: if the socket never appears or the
-//! connection drops, resume degrades to "watched / not watched" rather than
-//! failing playback.
+//! Two things run over it: reading playback position for resume, and appending
+//! upcoming episodes to the playlist so the player's own next/previous controls
+//! work part-way through an episode.
+//!
+//! Everything here is best-effort. If the socket never appears or the connection
+//! drops, resume degrades to "watched / not watched" and the playlist simply holds
+//! one episode.
 
+use std::collections::BTreeMap;
 use std::path::Path;
 use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
@@ -17,68 +22,94 @@ pub struct Progress {
     pub duration_secs: Option<u64>,
 }
 
-/// Ask mpv for a single numeric property.
-async fn get_number(socket: &Path, property: &str) -> Option<f64> {
+/// Send one command and read until a reply carrying `data` appears.
+///
+/// mpv interleaves asynchronous event lines on the same socket, so the first line
+/// back is frequently not the answer.
+async fn request(socket: &Path, command: &str) -> Option<serde_json::Value> {
     let stream = UnixStream::connect(socket).await.ok()?;
     let mut reader = BufReader::new(stream);
 
-    let request = format!(r#"{{"command":["get_property","{property}"]}}"#);
-    reader.get_mut().write_all(request.as_bytes()).await.ok()?;
+    reader.get_mut().write_all(command.as_bytes()).await.ok()?;
     reader.get_mut().write_all(b"\n").await.ok()?;
 
-    // mpv emits asynchronous event lines on the same socket, so read until a line
-    // carrying a `data` field appears rather than assuming the first line answers.
     let mut line = String::new();
     for _ in 0..16 {
         line.clear();
-        let n = reader.read_line(&mut line).await.ok()?;
-        if n == 0 {
+        if reader.read_line(&mut line).await.ok()? == 0 {
             return None;
         }
-        let value: serde_json::Value = match serde_json::from_str(&line) {
-            Ok(v) => v,
-            Err(_) => continue,
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(&line) else {
+            continue;
         };
-        if let Some(data) = value.get("data").and_then(|d| d.as_f64()) {
-            return Some(data);
+        if value.get("error").is_some() {
+            return Some(value);
         }
     }
     None
 }
 
-pub async fn read_progress(socket: &Path) -> Option<Progress> {
-    let position = get_number(socket, "time-pos").await?;
-    let duration = get_number(socket, "duration").await;
-
-    Some(Progress {
-        position_secs: position.max(0.0) as u64,
-        duration_secs: duration.filter(|d| *d > 0.0).map(|d| d as u64),
-    })
+async fn get_number(socket: &Path, property: &str) -> Option<f64> {
+    let command = format!(r#"{{"command":["get_property","{property}"]}}"#);
+    request(socket, &command)
+        .await?
+        .get("data")?
+        .as_f64()
 }
 
-/// Poll the socket until it stops responding, returning the last position seen.
+/// Add a stream to the end of the player's playlist.
 ///
-/// The socket only appears once IINA has started mpv, so early failures are
-/// expected and tolerated until `startup_grace` elapses.
+/// This is what makes the player's "next" control work mid-episode: the following
+/// episodes are already queued rather than needing kuro to relaunch.
+pub async fn append_to_playlist(socket: &Path, url: &str) -> bool {
+    // `loadfile <url> append` leaves the current item playing.
+    let command = serde_json::json!({ "command": ["loadfile", url, "append"] }).to_string();
+    let ok = request(socket, &command).await.is_some();
+    debug!(url, ok, "appended to playlist");
+    ok
+}
+
+pub async fn read_progress(socket: &Path) -> Option<(usize, Progress)> {
+    let position = get_number(socket, "time-pos").await?;
+    let duration = get_number(socket, "duration").await;
+    // Absent on very old mpv builds; treat the session as a single item then.
+    let index = get_number(socket, "playlist-pos").await.unwrap_or(0.0);
+
+    Some((
+        index.max(0.0) as usize,
+        Progress {
+            position_secs: position.max(0.0) as u64,
+            duration_secs: duration.filter(|d| *d > 0.0).map(|d| d as u64),
+        },
+    ))
+}
+
+/// Poll until the socket stops responding, returning the last position seen for
+/// each playlist index.
+///
+/// Keyed by index rather than a single value so that skipping ahead mid-episode
+/// still records progress against the right episode.
 pub async fn track_until_exit(
     socket: &Path,
     interval: Duration,
     startup_grace: Duration,
-) -> Option<Progress> {
+) -> BTreeMap<usize, Progress> {
     let started = std::time::Instant::now();
-    let mut last: Option<Progress> = None;
+    let mut seen: BTreeMap<usize, Progress> = BTreeMap::new();
 
     loop {
         tokio::time::sleep(interval).await;
 
         match read_progress(socket).await {
-            Some(progress) => last = Some(progress),
+            Some((index, progress)) => {
+                seen.insert(index, progress);
+            }
             None => {
-                // Before the grace period the player simply hasn't opened the
+                // Before the grace period the player simply has not opened the
                 // socket yet; after it, an unreadable socket means playback ended.
                 if started.elapsed() > startup_grace {
                     debug!("mpv IPC socket closed; stopping position tracking");
-                    return last;
+                    return seen;
                 }
             }
         }

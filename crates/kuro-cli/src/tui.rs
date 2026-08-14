@@ -185,12 +185,30 @@ async fn event_loop(app: &mut App, terminal: &mut Term) -> Result<()> {
 
         if let Some((series, episode)) = ui.pending_play.take() {
             restore(terminal)?;
-            let result = launch(app, &series, &episode).await;
+            let result = launch(app, &series, &episode, &ui.episodes).await;
             *terminal = setup()?;
             terminal.clear()?;
 
             ui.status = match result {
-                Ok(()) => format!("Finished Episode {}.", episode.number_label()),
+                Ok(()) => {
+                    // Land on the following episode so ⏎ plays it, rather than
+                    // dropping back onto the one just watched.
+                    let next = ui.episodes.iter().position(|e| e.number > episode.number);
+                    match next {
+                        Some(i) => {
+                            ui.episodes_state.select(Some(i));
+                            format!(
+                                "Finished Episode {} · ⏎ plays Episode {}",
+                                episode.number_label(),
+                                ui.episodes[i].number_label()
+                            )
+                        }
+                        None => format!(
+                            "Finished Episode {} — last in the list.",
+                            episode.number_label()
+                        ),
+                    }
+                }
                 Err(e) => format!("Playback failed: {e}"),
             };
         }
@@ -203,7 +221,12 @@ async fn event_loop(app: &mut App, terminal: &mut Term) -> Result<()> {
     Ok(())
 }
 
-async fn launch(app: &mut App, series: &Series, episode: &Episode) -> Result<()> {
+async fn launch(
+    app: &mut App,
+    series: &Series,
+    episode: &Episode,
+    episodes: &[Episode],
+) -> Result<()> {
     let provider = app
         .provider(series.provider_id.as_str())
         .ok_or_else(|| anyhow::anyhow!("provider `{}` is not loaded", series.provider_id))?;
@@ -219,6 +242,7 @@ async fn launch(app: &mut App, series: &Series, episode: &Episode) -> Result<()>
             series,
             episode,
             mirror: None,
+            upcoming: crate::playback::upcoming_after(episodes, episode),
             start_secs: start,
         },
     )

@@ -350,6 +350,7 @@ async fn play_and_continue(
                 series,
                 episode,
                 mirror: None,
+                upcoming: crate::playback::upcoming_after(episodes, episode),
                 start_secs: start,
             },
         )

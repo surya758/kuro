@@ -42,6 +42,10 @@ Watched episodes are marked, part-watched ones show a resume point, and playback
 rolls into the next episode when it ends. `q` steps back a level rather than
 quitting, so a wrong pick costs nothing.
 
+The next couple of episodes are queued into the player's playlist while you watch,
+so IINA's own next/previous controls jump between episodes without coming back to
+kuro.
+
 Everything is scriptable too — piping or `--json` skips the menus entirely.
 
 ## Contents

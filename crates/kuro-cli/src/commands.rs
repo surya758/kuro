@@ -283,6 +283,7 @@ pub async fn watch(app: &mut App, query: &[String]) -> Result<()> {
             series: chosen,
             episode,
             mirror: None,
+            upcoming: crate::playback::upcoming_after(&episodes, episode),
             start_secs: start,
         },
     )
@@ -351,6 +352,7 @@ pub async fn play_cmd(
                 series: &chosen,
                 episode,
                 mirror: mirror.clone(),
+                upcoming: crate::playback::upcoming_after(&episodes, episode),
                 start_secs: start,
             },
         )
@@ -451,7 +453,7 @@ pub async fn download_episodes(
 
     let spinner = crate::ui::Spinner::start(format!("Resolving {} episode(s)…", wanted.len()));
     for episode in wanted {
-        match crate::playback::ordered_mirrors(app, provider, episode, mirror).await {
+        match crate::playback::ordered_mirrors(app, provider, episode, mirror, false).await {
             Ok(mirrors) => ready.push((episode.clone(), mirrors)),
             Err(_) => failed.push(episode.number_label()),
         }
@@ -561,6 +563,7 @@ pub async fn next(app: &mut App) -> Result<()> {
             series: &series,
             episode: &next_episode,
             mirror: None,
+            upcoming: crate::playback::upcoming_after(&episodes, &next_episode),
             start_secs: None,
         },
     )
@@ -596,6 +599,7 @@ pub async fn continue_watching(app: &mut App) -> Result<()> {
             series: &series,
             episode: &episode,
             mirror: None,
+            upcoming: crate::playback::upcoming_after(&episodes, &episode),
             start_secs: start,
         },
     )

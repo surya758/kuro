@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.3.0
+
+### Added
+
+- **Next/previous part-way through an episode.** The following episodes are resolved
+  in the background and appended to the player's playlist over mpv IPC, so IINA's own
+  next/previous controls move between episodes without returning to kuro. Two are
+  queued ahead — the CDN links are signed and short-lived, so queueing further would
+  hand the player URLs that expire before it reaches them.
+- **Activity indicators for the slow steps.** Mirror resolution and per-host stream
+  resolution now show a spinner; previously both printed a line and then sat silent
+  for several seconds.
+
+### Changed
+
+- After an episode finishes in the TUI, the selection moves to the next episode and
+  the status line says so, instead of landing back on the one just watched.
+
+### Fixed
+
+- Watch history is now recorded per playlist position, so skipping ahead inside the
+  player credits the episode actually watched rather than the one kuro launched.
+
 ## v0.2.1
 
 ### Fixed
