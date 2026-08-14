@@ -162,11 +162,19 @@ pub fn parse_search(
         });
     }
 
-    // An empty result set is a legitimate "no matches"; the page failing to contain
-    // the container at all is what signals the markup changed.
-    if out.is_empty() && doc.select(&item_sel).next().is_none() {
-        let body_looks_real = html.len() > 512;
-        if body_looks_real {
+    if out.is_empty() {
+        // A query with no matches still renders the results container, so its
+        // presence means the page is fine and the search simply found nothing.
+        if let Some(container) = &sel.container {
+            let container_sel = compile(container)?;
+            if doc.select(&container_sel).next().is_some() {
+                return Ok(out);
+            }
+        }
+
+        // No container configured, or it has gone: treat a substantial page with
+        // nothing recognisable in it as a markup change.
+        if html.len() > 512 {
             return Err(ProviderError::parse(&sel.item, "search results"));
         }
     }

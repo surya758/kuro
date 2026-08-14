@@ -47,6 +47,14 @@ pub struct Selectors {
 pub struct SearchSelectors {
     /// Repeating element, one per result.
     pub item: String,
+    /// The element that *holds* the results.
+    ///
+    /// Lets a genuine "no matches" be told apart from a broken scraper: a search
+    /// with no results still renders this container, whereas a redesign removes it.
+    /// Without it, an unmatched query looks like breakage and counts against the
+    /// provider's health.
+    #[serde(default)]
+    pub container: Option<String>,
     pub title: String,
     pub url: String,
     #[serde(default)]

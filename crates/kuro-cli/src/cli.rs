@@ -180,6 +180,7 @@ pub enum Command {
     Continue,
 
     /// Show watch history.
+    #[command(alias = "history")]
     List {
         /// Maximum entries to show.
         #[arg(long, default_value_t = 20)]

@@ -16,7 +16,8 @@ search = "/?s={query}"
 series = "/anime/{slug}/"
 
 [selectors.search]
-item   = "div.listupd article.bs"
+item      = "div.listupd article.bs"
+container = "div.listupd"
 title  = "h2[itemprop=headline]"
 url    = "a[href]"
 poster = "img"

@@ -243,6 +243,46 @@ mod donghuastream {
             .all(|s| s.url.path().starts_with("/anime/") && !s.title.trim().is_empty()));
     }
 
+    const EMPTY_SEARCH_HTML: &str =
+        include_str!("../../../tests/fixtures/donghuastream/search-empty.html");
+
+    #[test]
+    fn a_search_with_no_matches_is_not_a_scraper_failure() {
+        // Regression: a query with zero results renders the container with nothing
+        // in it. That used to be reported as "the site's markup changed", which also
+        // counted against provider health — enough of them would auto-disable a
+        // perfectly healthy site.
+        let series = parse::parse_search(
+            EMPTY_SEARCH_HTML,
+            &spec().selectors.search,
+            &base(),
+            &ProviderId::new("donghuastream"),
+        )
+        .expect("zero results must not be an error");
+
+        assert!(series.is_empty());
+    }
+
+    #[test]
+    fn a_page_without_the_container_is_still_a_failure() {
+        // The distinction has to hold in both directions, or a real redesign would
+        // pass silently as "no results".
+        let mut selectors = spec().selectors.search;
+        selectors.container = Some("div.this-container-is-gone".to_string());
+
+        let result = parse::parse_search(
+            EMPTY_SEARCH_HTML,
+            &selectors,
+            &base(),
+            &ProviderId::new("donghuastream"),
+        );
+
+        assert!(matches!(
+            result,
+            Err(kuro_core::ProviderError::ParseFailure { .. })
+        ));
+    }
+
     #[test]
     fn series_page_parses_episodes_and_synopsis() {
         let episodes = parse::parse_episodes(

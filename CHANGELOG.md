@@ -1,5 +1,21 @@
 # Changelog
 
+## v0.3.2
+
+### Fixed
+
+- **A search with no matches was reported as a broken scraper.** Providers render an
+  empty results container for an unmatched query, which the parser read as "the
+  site's markup changed". That was noisy, and it counted against provider health —
+  a few unmatched searches in a row would auto-disable a perfectly healthy site.
+  Provider specs now name the results container, so "no matches" and "markup gone"
+  are told apart.
+
+### Added
+
+- `kuro history` as an alias for `kuro list`. Without it, the bare-query shorthand
+  quietly turned the typo into a search for the word "history".
+
 ## v0.3.1
 
 ### Fixed
