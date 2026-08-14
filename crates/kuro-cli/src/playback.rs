@@ -238,6 +238,7 @@ fn spawn_lookahead(
     quality: kuro_core::QualityPref,
     preference: Vec<String>,
     socket: std::path::PathBuf,
+    playlist: Arc<std::sync::Mutex<Vec<f32>>>,
 ) -> tokio::task::JoinHandle<Vec<Episode>> {
     tokio::spawn(async move {
         let mut queued = Vec::new();
@@ -288,10 +289,92 @@ fn spawn_lookahead(
                 break;
             }
             debug!(episode = episode.number, "queued for playback");
+            // Keep the index -> episode map in step with the player's playlist so
+            // the recorder credits the right episode if the viewer skips ahead.
+            if let Ok(mut p) = playlist.lock() {
+                p.push(episode.number);
+            }
             queued.push(episode);
         }
 
         queued
+    })
+}
+
+/// Series identity for the background recorder, which cannot borrow `App`.
+#[derive(Clone)]
+struct HistoryTarget {
+    provider_id: String,
+    series_id: String,
+    series_title: String,
+    series_url: String,
+}
+
+/// Persist watch progress *while* the episode plays, not only once it ends.
+///
+/// Writing only on exit meant Ctrl-C — the natural way to get the prompt back while
+/// the player keeps running — discarded the entire session. Checkpointing every few
+/// seconds means at most one interval is ever lost.
+///
+/// `playlist` maps playlist index to episode number and grows as the lookahead
+/// queues more, so skipping ahead in the player credits the right episode.
+fn spawn_progress_recorder(
+    socket: std::path::PathBuf,
+    target: HistoryTarget,
+    playlist: Arc<std::sync::Mutex<Vec<f32>>>,
+) -> tokio::task::JoinHandle<()> {
+    tokio::spawn(async move {
+        let Ok(paths) = kuro_store::Paths::discover() else {
+            warn!("cannot locate data directory; progress will not be saved");
+            return;
+        };
+
+        let started = std::time::Instant::now();
+        let mut last: std::collections::BTreeMap<usize, u64> = std::collections::BTreeMap::new();
+
+        loop {
+            tokio::time::sleep(Duration::from_secs(5)).await;
+
+            let Some((index, progress)) = ipc::read_progress(&socket).await else {
+                // Before the grace period the player simply has not opened the
+                // socket yet; after it, an unreadable socket means playback ended.
+                if started.elapsed() > Duration::from_secs(30) {
+                    debug!("player IPC closed; progress recorder stopping");
+                    return;
+                }
+                continue;
+            };
+
+            // Avoid rewriting the file while paused.
+            if last.get(&index) == Some(&progress.position_secs) {
+                continue;
+            }
+            last.insert(index, progress.position_secs);
+
+            let number = playlist
+                .lock()
+                .ok()
+                .and_then(|p| p.get(index).copied());
+            let Some(number) = number else { continue };
+
+            let Ok(mut history) = kuro_store::History::load(&paths) else {
+                continue;
+            };
+            history.record(
+                &target.provider_id,
+                &target.series_id,
+                &target.series_title,
+                &target.series_url,
+                number,
+                progress.position_secs,
+                progress.duration_secs,
+            );
+            if let Err(e) = history.save(&paths) {
+                warn!(error = %e, "could not save watch history");
+                return;
+            }
+            debug!(episode = number, position = progress.position_secs, "checkpointed");
+        }
     })
 }
 
@@ -322,6 +405,7 @@ async fn launch(
         None => None,
     };
 
+    kuro_player::sweep_stale_sockets();
     let socket = ipc_socket_path();
     let opts = PlaybackOpts {
         title: Some(title.clone()),
@@ -346,12 +430,23 @@ async fn launch(
         stream.quality_label()
     );
 
+    // The ⏪/⏩ buttons on IINA's on-screen controls are seek/speed, not playlist
+    // navigation — worth saying, because reaching for them is the obvious move.
+    if !upcoming.is_empty() {
+        eprintln!("   \x1b[2m⌘→ / ⌘← in IINA switch episode · ⇧⌘P for the playlist\x1b[0m");
+    }
+    eprintln!("   \x1b[2mkuro stays open to save your progress\x1b[0m");
+
     let mut handle = player
         .play(stream, &opts)
         .await
         .context("launching the player")?;
 
     let socket_path = std::path::PathBuf::from(&socket);
+
+    // Playlist index -> episode number. Seeded with what we just launched; the
+    // lookahead appends as it queues more.
+    let playlist = Arc::new(std::sync::Mutex::new(vec![episode.number]));
 
     // Queue the next episodes so the player's own next/previous work mid-episode.
     let lookahead = spawn_lookahead(
@@ -361,55 +456,29 @@ async fn launch(
         app.quality,
         app.config.provider(series.provider_id.as_str()).mirrors,
         socket_path.clone(),
+        Arc::clone(&playlist),
     );
 
-    // Track position alongside playback so the session can be resumed later.
-    let tracker = tokio::spawn(async move {
-        ipc::track_until_exit(&socket_path, Duration::from_secs(5), Duration::from_secs(30)).await
-    });
+    // Save progress as it happens, so quitting kuro does not discard the session.
+    let recorder = spawn_progress_recorder(
+        socket_path,
+        HistoryTarget {
+            provider_id: series.provider_id.to_string(),
+            series_id: series.id.clone(),
+            series_title: series.title.clone(),
+            series_url: series.url.to_string(),
+        },
+        playlist,
+    );
 
     handle.wait().await.ok();
-    let progress = tracker.await.unwrap_or_default();
-    let queued = lookahead.await.unwrap_or_default();
+
+    // Progress was already checkpointed as it played; these just stop cleanly.
+    recorder.abort();
+    lookahead.abort();
 
     // The socket is ours; leaving it behind would litter the temp directory.
     std::fs::remove_file(&socket).ok();
-
-    // Playlist index 0 is the episode we launched; the rest are what the lookahead
-    // appended, in order. Recording per index means skipping ahead in the player
-    // still credits the right episode.
-    let mut history = app.history()?;
-    let mut recorded = 0usize;
-
-    for (index, progress) in progress {
-        let Some(watched) = (if index == 0 {
-            Some(episode)
-        } else {
-            queued.get(index - 1)
-        }) else {
-            continue;
-        };
-
-        history.record(
-            series.provider_id.as_str(),
-            &series.id,
-            &series.title,
-            series.url.as_str(),
-            watched.number,
-            progress.position_secs,
-            progress.duration_secs,
-        );
-        recorded += 1;
-        debug!(
-            episode = watched.number,
-            position = progress.position_secs,
-            "recorded progress"
-        );
-    }
-
-    if recorded > 0 {
-        history.save(&app.paths).context("saving watch history")?;
-    }
 
     app.save_health().ok();
     Ok(())

@@ -69,6 +69,39 @@ pub trait Player: Send + Sync {
 }
 
 /// A unique IPC socket path for one playback session.
+/// Remove IPC sockets left behind by earlier runs.
+///
+/// A session ended with Ctrl-C never reaches its own cleanup, so without this the
+/// temp directory accumulates a dead socket per interrupted playback.
+pub fn sweep_stale_sockets() {
+    const MAX_AGE: std::time::Duration = std::time::Duration::from_secs(6 * 60 * 60);
+
+    let Ok(entries) = std::fs::read_dir(std::env::temp_dir()) else {
+        return;
+    };
+
+    for entry in entries.flatten() {
+        let path = entry.path();
+        let is_ours = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.starts_with("kuro-mpv-") && n.ends_with(".sock"));
+        if !is_ours {
+            continue;
+        }
+
+        let stale = entry
+            .metadata()
+            .and_then(|m| m.modified())
+            .map(|m| m.elapsed().map(|age| age > MAX_AGE).unwrap_or(false))
+            .unwrap_or(false);
+
+        if stale {
+            std::fs::remove_file(&path).ok();
+        }
+    }
+}
+
 pub fn ipc_socket_path() -> String {
     std::env::temp_dir()
         .join(format!("kuro-mpv-{}.sock", std::process::id()))

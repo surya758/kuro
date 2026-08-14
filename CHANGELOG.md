@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.3.1
+
+### Fixed
+
+- **Watch history was never saved when kuro was interrupted.** Progress was only
+  written after the player exited, so Ctrl-C — the natural way to get the prompt
+  back while IINA keeps playing — discarded the whole session, leaving `kuro list`,
+  `continue` and `next` empty. Progress is now checkpointed every few seconds while
+  the episode plays.
+- IPC sockets from interrupted sessions are swept on the next run instead of
+  accumulating in the temp directory.
+
+### Changed
+
+- Playback now prints the keys that actually switch episode. IINA's on-screen ⏪/⏩
+  buttons are seek/speed controls, not playlist navigation — it binds ⌘→ / ⌘← for
+  that, and ⇧⌘P for the playlist panel.
+
 ## v0.3.0
 
 ### Added
