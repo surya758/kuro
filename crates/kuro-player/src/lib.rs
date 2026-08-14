@@ -82,10 +82,10 @@ pub fn sweep_stale_sockets() {
 
     for entry in entries.flatten() {
         let path = entry.path();
-        let is_ours = path
-            .file_name()
-            .and_then(|n| n.to_str())
-            .is_some_and(|n| n.starts_with("kuro-mpv-") && n.ends_with(".sock"));
+        let is_ours = path.file_name().and_then(|n| n.to_str()).is_some_and(|n| {
+            (n.starts_with("kuro-mpv-") && n.ends_with(".sock"))
+                || (n.starts_with("kuro-entry-") && n.ends_with(".m3u"))
+        });
         if !is_ours {
             continue;
         }

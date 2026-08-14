@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.3.3
+
+### Fixed
+
+- **The playlist panel showed raw CDN URLs instead of episode names.** A playlist
+  entry's display name can only come from the playlist itself, so queued episodes
+  are now appended as one-entry M3Us carrying an `#EXTINF` label rather than as bare
+  URLs.
+- **The window title stayed on the first episode after switching.** `force-media-title`
+  is a global option, so the name passed at launch was pinned to every later entry.
+  The title is now updated over IPC whenever the player moves to another episode.
+
 ## v0.3.2
 
 ### Fixed

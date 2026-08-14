@@ -231,16 +231,30 @@ const LOOKAHEAD: usize = 2;
 /// each append lands whenever that episode finishes resolving.
 ///
 /// Returns the episodes actually queued, in playlist order after the first.
-fn spawn_lookahead(
+struct LookaheadJob {
     ctx: kuro_core::FetchCtx,
     provider: Arc<dyn Provider>,
     episodes: Vec<Episode>,
     quality: kuro_core::QualityPref,
     preference: Vec<String>,
     socket: std::path::PathBuf,
-    playlist: Arc<std::sync::Mutex<Vec<f32>>>,
-) -> tokio::task::JoinHandle<Vec<Episode>> {
+    /// Playlist index -> (episode number, display title).
+    playlist: Arc<std::sync::Mutex<Vec<(f32, String)>>>,
+    series_title: String,
+}
+
+fn spawn_lookahead(job: LookaheadJob) -> tokio::task::JoinHandle<Vec<Episode>> {
     tokio::spawn(async move {
+        let LookaheadJob {
+            ctx,
+            provider,
+            episodes,
+            quality,
+            preference,
+            socket,
+            playlist,
+            series_title,
+        } = job;
         let mut queued = Vec::new();
         if episodes.is_empty() {
             return queued;
@@ -279,7 +293,8 @@ fn spawn_lookahead(
                 let Some(stream) = streams.into_iter().next() else {
                     continue;
                 };
-                appended = ipc::append_to_playlist(&socket, stream.url.as_str()).await;
+                let label = format!("{series_title} · Episode {}", episode.number_label());
+                appended = ipc::append_to_playlist(&socket, stream.url.as_str(), &label).await;
                 break;
             }
 
@@ -292,7 +307,10 @@ fn spawn_lookahead(
             // Keep the index -> episode map in step with the player's playlist so
             // the recorder credits the right episode if the viewer skips ahead.
             if let Ok(mut p) = playlist.lock() {
-                p.push(episode.number);
+                p.push((
+                    episode.number,
+                    format!("{series_title} · Episode {}", episode.number_label()),
+                ));
             }
             queued.push(episode);
         }
@@ -321,7 +339,7 @@ struct HistoryTarget {
 fn spawn_progress_recorder(
     socket: std::path::PathBuf,
     target: HistoryTarget,
-    playlist: Arc<std::sync::Mutex<Vec<f32>>>,
+    playlist: Arc<std::sync::Mutex<Vec<(f32, String)>>>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let Ok(paths) = kuro_store::Paths::discover() else {
@@ -331,9 +349,10 @@ fn spawn_progress_recorder(
 
         let started = std::time::Instant::now();
         let mut last: std::collections::BTreeMap<usize, u64> = std::collections::BTreeMap::new();
+        let mut current_index: Option<usize> = None;
 
         loop {
-            tokio::time::sleep(Duration::from_secs(5)).await;
+            tokio::time::sleep(Duration::from_secs(2)).await;
 
             let Some((index, progress)) = ipc::read_progress(&socket).await else {
                 // Before the grace period the player simply has not opened the
@@ -351,11 +370,20 @@ fn spawn_progress_recorder(
             }
             last.insert(index, progress.position_secs);
 
-            let number = playlist
+            let entry = playlist
                 .lock()
                 .ok()
-                .and_then(|p| p.get(index).copied());
-            let Some(number) = number else { continue };
+                .and_then(|p| p.get(index).cloned());
+            let Some((number, entry_title)) = entry else {
+                continue;
+            };
+
+            // `force-media-title` is global, so without this the window keeps
+            // showing the first episode's name for every later entry.
+            if current_index != Some(index) {
+                ipc::set_media_title(&socket, &entry_title).await;
+                current_index = Some(index);
+            }
 
             let Ok(mut history) = kuro_store::History::load(&paths) else {
                 continue;
@@ -446,18 +474,19 @@ async fn launch(
 
     // Playlist index -> episode number. Seeded with what we just launched; the
     // lookahead appends as it queues more.
-    let playlist = Arc::new(std::sync::Mutex::new(vec![episode.number]));
+    let playlist = Arc::new(std::sync::Mutex::new(vec![(episode.number, title.clone())]));
 
     // Queue the next episodes so the player's own next/previous work mid-episode.
-    let lookahead = spawn_lookahead(
-        app.ctx.clone(),
-        Arc::clone(provider),
-        upcoming.iter().take(LOOKAHEAD).cloned().collect(),
-        app.quality,
-        app.config.provider(series.provider_id.as_str()).mirrors,
-        socket_path.clone(),
-        Arc::clone(&playlist),
-    );
+    let lookahead = spawn_lookahead(LookaheadJob {
+        ctx: app.ctx.clone(),
+        provider: Arc::clone(provider),
+        episodes: upcoming.iter().take(LOOKAHEAD).cloned().collect(),
+        quality: app.quality,
+        preference: app.config.provider(series.provider_id.as_str()).mirrors,
+        socket: socket_path.clone(),
+        playlist: Arc::clone(&playlist),
+        series_title: series.title.clone(),
+    });
 
     // Save progress as it happens, so quitting kuro does not discard the session.
     let recorder = spawn_progress_recorder(

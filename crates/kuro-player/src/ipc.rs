@@ -57,16 +57,57 @@ async fn get_number(socket: &Path, property: &str) -> Option<f64> {
         .as_f64()
 }
 
-/// Add a stream to the end of the player's playlist.
+/// Add a stream to the end of the player's playlist, labelled `title`.
 ///
-/// This is what makes the player's "next" control work mid-episode: the following
-/// episodes are already queued rather than needing kuro to relaunch.
-pub async fn append_to_playlist(socket: &Path, url: &str) -> bool {
-    // `loadfile <url> append` leaves the current item playing.
-    let command = serde_json::json!({ "command": ["loadfile", url, "append"] }).to_string();
+/// Goes via a one-entry M3U rather than `loadfile`, because a playlist entry's
+/// display name can only come from the playlist itself: `loadfile` — even with a
+/// per-file `force-media-title` — leaves `playlist/N/title` unset, so the player's
+/// playlist panel falls back to showing the raw CDN URL.
+pub async fn append_to_playlist(socket: &Path, url: &str, title: &str) -> bool {
+    let Some(playlist) = write_entry_playlist(url, title) else {
+        return false;
+    };
+
+    let command = serde_json::json!({
+        "command": ["loadlist", playlist.to_string_lossy(), "append"]
+    })
+    .to_string();
+
     let ok = request(socket, &command).await.is_some();
-    debug!(url, ok, "appended to playlist");
+    debug!(url, title, ok, "appended to playlist");
     ok
+}
+
+/// Write a single-entry M3U carrying the episode name.
+fn write_entry_playlist(url: &str, title: &str) -> Option<std::path::PathBuf> {
+    // A newline in the title would forge extra playlist entries.
+    let title = title.replace(['\n', '\r'], " ");
+    let name = format!(
+        "kuro-entry-{}-{}.m3u",
+        std::process::id(),
+        // Distinguishes concurrent entries without pulling in a random source.
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0)
+    );
+
+    let path = std::env::temp_dir().join(name);
+    let body = format!("#EXTM3U\n#EXTINF:-1,{title}\n{url}\n");
+    std::fs::write(&path, body).ok()?;
+    Some(path)
+}
+
+/// Retitle the player window.
+///
+/// `--force-media-title` is a global option, so the title passed at launch would
+/// otherwise stay pinned to the first episode for every later playlist entry.
+pub async fn set_media_title(socket: &Path, title: &str) -> bool {
+    let command = serde_json::json!({
+        "command": ["set_property", "force-media-title", title]
+    })
+    .to_string();
+    request(socket, &command).await.is_some()
 }
 
 pub async fn read_progress(socket: &Path) -> Option<(usize, Progress)> {
