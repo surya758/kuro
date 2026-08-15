@@ -1,5 +1,15 @@
 # Changelog
 
+## v0.4.5
+
+### Fixed
+
+- **"Next" offered an episode you had already watched.** The player queues the next
+  couple of episodes, so ⌘→ can carry you well past what kuro launched — but the
+  post-playback menu still counted from the launched episode. Starting at 8 and
+  skipping to 10 offered "Next: Episode 9". It now continues from the episode you
+  actually finished on.
+
 ## v0.4.4
 
 ### Fixed

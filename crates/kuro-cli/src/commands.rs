@@ -492,7 +492,11 @@ pub async fn next(app: &mut App) -> Result<()> {
             start_secs: None,
         },
     )
-    .await
+    .await?;
+
+    // This command exits once playback ends, so where the viewer skipped to only
+    // matters for history — which the recorder has already written.
+    Ok(())
 }
 
 pub async fn continue_watching(app: &mut App) -> Result<()> {
@@ -528,7 +532,9 @@ pub async fn continue_watching(app: &mut App) -> Result<()> {
             start_secs: start,
         },
     )
-    .await
+    .await?;
+
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

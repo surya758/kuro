@@ -141,7 +141,13 @@ pub async fn ordered_mirrors(
     Ok(ordered)
 }
 
-pub async fn play(app: &mut App, req: PlayRequest<'_>) -> Result<()> {
+/// Play an episode, returning the episode number the session actually ended on.
+///
+/// That is not always the one passed in: the player's own next/previous controls
+/// move through the queued playlist, so the viewer can finish several episodes
+/// further along. `None` when nothing was tracked — a dry run, or a session too
+/// short for the recorder to see anything.
+pub async fn play(app: &mut App, req: PlayRequest<'_>) -> Result<Option<f32>> {
     let ordered =
         ordered_mirrors(app, &req.provider, req.episode, req.mirror.as_deref(), true).await?;
 
@@ -336,10 +342,15 @@ struct HistoryTarget {
 ///
 /// `playlist` maps playlist index to episode number and grows as the lookahead
 /// queues more, so skipping ahead in the player credits the right episode.
+///
+/// `last_played` receives the episode number behind each checkpoint, so the caller
+/// can tell where the viewer actually ended up after using the player's own
+/// next/previous controls.
 fn spawn_progress_recorder(
     socket: std::path::PathBuf,
     target: HistoryTarget,
     playlist: Arc<std::sync::Mutex<Vec<(f32, String)>>>,
+    last_played: Arc<std::sync::Mutex<Option<f32>>>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
         let Ok(paths) = kuro_store::Paths::discover() else {
@@ -381,6 +392,10 @@ fn spawn_progress_recorder(
             let Some((number, entry_title)) = entry else {
                 continue;
             };
+
+            if let Ok(mut last_played) = last_played.lock() {
+                *last_played = Some(number);
+            }
 
             // `force-media-title` is global, so without this the window keeps
             // showing the first episode's name for every later entry.
@@ -440,7 +455,7 @@ async fn launch(
     stream: &Stream,
     mirror: &ResolvedMirror,
     start_secs: Option<u64>,
-) -> Result<()> {
+) -> Result<Option<f32>> {
     let title = format!("{} · Episode {}", series.title, episode.number_label());
     let requested = app.quality;
 
@@ -474,7 +489,7 @@ async fn launch(
     if app.dry_run {
         let preview = player.command_preview(stream, &opts);
         println!("{}", preview.join(" "));
-        return Ok(());
+        return Ok(None);
     }
 
     eprintln!(
@@ -518,6 +533,10 @@ async fn launch(
         series_title: series.title.clone(),
     });
 
+    // Tracks which episode the viewer actually finished on, which is not the one
+    // launched if they used the player's own next/previous controls.
+    let last_played = Arc::new(std::sync::Mutex::new(None));
+
     // Save progress as it happens, so quitting kuro does not discard the session.
     let recorder = spawn_progress_recorder(
         socket_path,
@@ -528,6 +547,7 @@ async fn launch(
             series_url: series.url.to_string(),
         },
         playlist,
+        Arc::clone(&last_played),
     );
 
     handle.wait().await.ok();
@@ -540,7 +560,7 @@ async fn launch(
     std::fs::remove_file(&socket).ok();
 
     app.save_health().ok();
-    Ok(())
+    Ok(last_played.lock().ok().and_then(|last| *last))
 }
 
 /// Episodes following `episode`, for playlist lookahead.

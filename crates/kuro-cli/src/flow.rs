@@ -341,6 +341,23 @@ fn bookmark(app: &App, series: &Series) -> Result<()> {
     Ok(())
 }
 
+/// Which episode to continue from once the player exits.
+///
+/// The player queues the next episodes, so its own next/previous controls can carry
+/// the viewer well past what kuro launched. Preferring the episode the recorder last
+/// saw stops the "Finished" menu offering one they just watched. Falls back to the
+/// launched position when nothing was tracked, or when the number is not in this
+/// list — a filtered range, say.
+fn resume_index(episodes: &[Episode], launched: usize, finished: Option<f32>) -> usize {
+    finished
+        .and_then(|number| {
+            episodes
+                .iter()
+                .position(|e| (e.number - number).abs() < f32::EPSILON)
+        })
+        .unwrap_or(launched)
+}
+
 /// Outcome of the post-playback menu.
 enum PlayNext {
     /// Reopen the action menu on this episode.
@@ -365,7 +382,7 @@ async fn play_and_continue(
             app.history()?
                 .resume_position(series.provider_id.as_str(), &series.id, episode.number);
 
-        play(
+        let finished = play(
             app,
             PlayRequest {
                 provider: Arc::clone(provider),
@@ -377,6 +394,8 @@ async fn play_and_continue(
             },
         )
         .await?;
+
+        current = resume_index(episodes, current, finished);
 
         let next = episodes.get(current + 1);
         let mut items = Vec::new();
@@ -402,5 +421,56 @@ async fn play_and_continue(
             i if i == offset + 1 => return Ok(PlayNext::Continue(current)),
             _ => return Ok(PlayNext::Quit),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn episodes(numbers: &[f32]) -> Vec<Episode> {
+        numbers
+            .iter()
+            .map(|n| Episode {
+                series_id: "s".to_string(),
+                number: *n,
+                title: None,
+                url: "https://example.test/e".parse().expect("test url"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn skipping_ahead_in_the_player_moves_the_continue_point() {
+        // The regression: launch episode 8, reach episode 10 with the player's own
+        // controls. Continuing from the launched index would offer episode 9 again.
+        let eps = episodes(&[8.0, 9.0, 10.0, 11.0]);
+        assert_eq!(resume_index(&eps, 0, Some(10.0)), 2);
+    }
+
+    #[test]
+    fn staying_on_the_launched_episode_changes_nothing() {
+        let eps = episodes(&[8.0, 9.0, 10.0]);
+        assert_eq!(resume_index(&eps, 0, Some(8.0)), 0);
+    }
+
+    #[test]
+    fn an_untracked_session_keeps_the_launched_position() {
+        // Nothing recorded — a dry run, or a session too short to checkpoint.
+        let eps = episodes(&[8.0, 9.0, 10.0]);
+        assert_eq!(resume_index(&eps, 1, None), 1);
+    }
+
+    #[test]
+    fn an_episode_outside_this_list_keeps_the_launched_position() {
+        // Guards the filtered-range case, where the played episode need not appear.
+        let eps = episodes(&[8.0, 9.0]);
+        assert_eq!(resume_index(&eps, 1, Some(42.0)), 1);
+    }
+
+    #[test]
+    fn half_episodes_are_matched_exactly() {
+        let eps = episodes(&[1.0, 1.5, 2.0]);
+        assert_eq!(resume_index(&eps, 0, Some(1.5)), 1);
     }
 }
