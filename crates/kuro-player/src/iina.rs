@@ -75,8 +75,13 @@ impl IinaPlayer {
 
         // Video and audio arrive as separate renditions on hosts that publish no
         // muxed format; without this the picture plays in silence.
+        //
+        // `audio-files-append` rather than `audio-file`: the latter is a deprecated
+        // alias, and while mpv still honours it directly, passing it through
+        // iina-cli drops the track without complaint. Same reason the headers above
+        // use the `-append` form of their list option.
         if let Some(audio) = &stream.audio_url {
-            args.push(format!("--mpv-audio-file={audio}"));
+            args.push(format!("--mpv-audio-files-append={audio}"));
         }
 
         if let Some(start) = opts.start_secs.filter(|s| *s > 0) {
