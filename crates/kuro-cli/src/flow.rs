@@ -218,7 +218,7 @@ async fn action_menu(
                     .await?;
                 }
             }
-            3 => app.quality = pick_quality(app.quality)?,
+            3 => app.quality = pick_quality(app, provider, episode, app.quality).await?,
             4 => bookmark(app, series)?,
             _ => return Ok(Step::Back),
         }
@@ -252,7 +252,52 @@ fn quality_caveat(q: QualityPref) -> Option<&'static str> {
     }
 }
 
-fn pick_quality(current: QualityPref) -> Result<QualityPref> {
+/// What `pref` would actually deliver from a host offering `heights`.
+///
+/// Mirrors the resolver's rule — the closest rendition at or below the cap, or the
+/// smallest available when everything overshoots — so the menu promises exactly
+/// what playback will do.
+fn delivered(heights: &[u32], pref: QualityPref) -> Option<u32> {
+    if heights.is_empty() {
+        return None;
+    }
+    match pref.target_height() {
+        None => match pref {
+            QualityPref::Worst => heights.iter().min().copied(),
+            _ => heights.iter().max().copied(),
+        },
+        Some(cap) => heights
+            .iter()
+            .filter(|h| **h <= cap)
+            .max()
+            .copied()
+            .or_else(|| heights.iter().min().copied()),
+    }
+}
+
+/// The host's real ladder for this episode, or `None` if it cannot be determined.
+///
+/// Costs a mirror resolution plus an extractor call, which is why it happens only
+/// when the menu is opened rather than on every episode.
+async fn probe_heights(
+    app: &mut App,
+    provider: &Arc<dyn Provider>,
+    episode: &Episode,
+) -> Option<Vec<u32>> {
+    let ordered = crate::playback::ordered_mirrors(app, provider, episode, None, false)
+        .await
+        .ok()?;
+    let first = ordered.first()?;
+    let heights = app.resolver.available_heights(&first.embed).await.ok()?;
+    (!heights.is_empty()).then_some(heights)
+}
+
+async fn pick_quality(
+    app: &mut App,
+    provider: &Arc<dyn Provider>,
+    episode: &Episode,
+    current: QualityPref,
+) -> Result<QualityPref> {
     const CHOICES: [QualityPref; 8] = [
         QualityPref::Best,
         QualityPref::P2160,
@@ -264,30 +309,58 @@ fn pick_quality(current: QualityPref) -> Result<QualityPref> {
         QualityPref::Worst,
     ];
 
-    let items: Vec<Item> = CHOICES
-        .iter()
-        .map(|q| match (*q == current, quality_caveat(*q)) {
-            (true, Some(caveat)) => {
-                Item::with_hint(quality_label(*q), format!("current · {caveat}"))
-            }
-            (true, None) => Item::with_hint(quality_label(*q), "current"),
-            (false, Some(caveat)) => Item::with_hint(quality_label(*q), caveat),
-            (false, None) => Item::new(quality_label(*q)),
-        })
-        .collect();
+    let spinner = Spinner::start("Checking what this episode offers…");
+    let heights = probe_heights(app, provider, episode).await;
+    spinner.clear().await;
 
-    // Named "max" throughout: this is a ceiling, and the closest rung at or below
-    // it is what actually plays.
-    Ok(
-        match ui::select(
-            "Max quality — you get the best the host has at or below this",
-            &items,
-        )? {
-            Choice::Picked(i) => CHOICES[i],
-            // Cancelling a submenu keeps the existing setting.
-            Choice::Cancelled => current,
-        },
-    )
+    // Rungs that resolve to the same rendition are the same choice wearing two
+    // names; showing both invites picking "2160p" on a source that stops at 1080p.
+    let mut items = Vec::new();
+    let mut choices = Vec::new();
+    let mut previous: Option<u32> = None;
+
+    for quality in CHOICES {
+        let got = heights.as_deref().and_then(|h| delivered(h, quality));
+        if let (Some(got), Some(prev)) = (got, previous) {
+            if got == prev {
+                continue;
+            }
+        }
+        if got.is_some() {
+            previous = got;
+        }
+
+        // A probed height is the truth; without one, fall back to flagging the
+        // rungs these hosts rarely serve.
+        let detail = match got {
+            Some(h) => Some(format!("{h}p")),
+            None => quality_caveat(quality).map(str::to_string),
+        };
+        let hint = match (detail, quality == current) {
+            (Some(d), true) => Some(format!("{d} · current")),
+            (Some(d), false) => Some(d),
+            (None, true) => Some("current".to_string()),
+            (None, false) => None,
+        };
+
+        items.push(match hint {
+            Some(h) => Item::with_hint(quality_label(quality), h),
+            None => Item::new(quality_label(quality)),
+        });
+        choices.push(quality);
+    }
+
+    let title = if heights.is_some() {
+        "Max quality — heights this episode actually offers"
+    } else {
+        "Max quality — you get the best the host has at or below this"
+    };
+
+    Ok(match ui::select(title, &items)? {
+        Choice::Picked(i) => choices[i],
+        // Cancelling a submenu keeps the existing setting.
+        Choice::Cancelled => current,
+    })
 }
 
 fn prompt_range(episodes: &[Episode]) -> Result<Option<Vec<Episode>>> {
@@ -433,6 +506,57 @@ mod tests {
                 url: "https://example.test/e".parse().expect("test url"),
             })
             .collect()
+    }
+
+    #[test]
+    fn a_cap_selects_the_closest_rendition_at_or_below_it() {
+        // A real 2.39:1 ladder: the frames are shorter than their rung names, so a
+        // 1080 cap legitimately reaches the rendition marketed as 1440p.
+        let heights = vec![1608, 1072, 808, 536];
+        assert_eq!(delivered(&heights, QualityPref::P2160), Some(1608));
+        assert_eq!(delivered(&heights, QualityPref::P1440), Some(1072));
+        assert_eq!(delivered(&heights, QualityPref::P1080), Some(1072));
+        assert_eq!(delivered(&heights, QualityPref::P720), Some(536));
+    }
+
+    #[test]
+    fn caps_landing_on_one_rendition_are_a_single_choice() {
+        // 1440p and 1080p both reach 1072 on the ladder above, so the menu must
+        // offer one entry rather than two that behave identically.
+        let heights = vec![1608, 1072, 808, 536];
+        assert_eq!(
+            delivered(&heights, QualityPref::P1440),
+            delivered(&heights, QualityPref::P1080)
+        );
+    }
+
+    #[test]
+    fn a_cap_below_everything_still_plays_the_smallest() {
+        // Refusing to play would be worse than exceeding the cap.
+        assert_eq!(delivered(&[1080, 720], QualityPref::P360), Some(720));
+    }
+
+    #[test]
+    fn relative_choices_take_the_ends_of_the_ladder() {
+        let heights = vec![1608, 1072, 536];
+        assert_eq!(delivered(&heights, QualityPref::Best), Some(1608));
+        assert_eq!(delivered(&heights, QualityPref::Worst), Some(536));
+    }
+
+    #[test]
+    fn an_unknown_ladder_promises_nothing() {
+        assert_eq!(delivered(&[], QualityPref::P1080), None);
+    }
+
+    #[test]
+    fn rungs_above_the_host_ceiling_collapse_together() {
+        // 2160p and 1440p both yield 1080 on this host, so the menu must not
+        // offer them as if they were distinct choices.
+        let heights = vec![1080, 720, 480];
+        assert_eq!(
+            delivered(&heights, QualityPref::P2160),
+            delivered(&heights, QualityPref::P1440)
+        );
     }
 
     #[test]

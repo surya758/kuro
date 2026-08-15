@@ -20,6 +20,16 @@ pub trait StreamResolver: Send + Sync {
 
     /// Resolve to candidate streams, ranked best-first for `pref`.
     async fn resolve(&self, url: &Url, pref: QualityPref) -> Result<Vec<Stream>, ResolveError>;
+
+    /// Video heights this host actually offers, descending.
+    ///
+    /// Distinct from [`StreamResolver::resolve`], which answers "what should play";
+    /// this answers "what could", so a quality menu can offer the real ladder
+    /// instead of a fixed list that over- or under-sells every source. Empty by
+    /// default: a resolver that cannot enumerate simply declines to inform the menu.
+    async fn available_heights(&self, _url: &Url) -> Result<Vec<u32>, ResolveError> {
+        Ok(Vec::new())
+    }
 }
 
 /// Tries native resolvers in order, then falls back to the general one.
@@ -52,6 +62,16 @@ impl ResolverChain {
 
         debug!(resolver = self.fallback.name(), %url, "resolving with fallback");
         self.fallback.resolve(url, pref).await
+    }
+
+    /// Video heights the host offers, descending. Empty when unknown.
+    pub async fn available_heights(&self, url: &Url) -> Result<Vec<u32>, ResolveError> {
+        for resolver in &self.native {
+            if resolver.can_handle(url) {
+                return resolver.available_heights(url).await;
+            }
+        }
+        self.fallback.available_heights(url).await
     }
 }
 

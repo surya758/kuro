@@ -303,6 +303,20 @@ impl StreamResolver for YtDlpResolver {
         true
     }
 
+    async fn available_heights(&self, url: &Url) -> Result<Vec<u32>, ResolveError> {
+        let output = self.run_json(url).await?;
+        let mut heights: Vec<u32> = output
+            .formats
+            .iter()
+            .filter(|f| f.has_video())
+            .filter_map(|f| f.height)
+            .collect();
+
+        heights.sort_unstable_by(|a, b| b.cmp(a));
+        heights.dedup();
+        Ok(heights)
+    }
+
     async fn resolve(&self, url: &Url, pref: QualityPref) -> Result<Vec<Stream>, ResolveError> {
         let output = self.run_json(url).await?;
 
