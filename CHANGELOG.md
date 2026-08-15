@@ -1,5 +1,23 @@
 # Changelog
 
+## v0.4.0
+
+### Changed — breaking
+
+- **One entry point.** `kuro search "<query>"` is now the only way to search.
+  The bare-query shorthand (`kuro against the gods`) is gone, and so is the
+  full-screen TUI that bare `kuro` used to open — three doors to the same room was
+  more surface than the tool needs. Bare `kuro` prints help.
+- **The query is a single argument, so quote it.** `kuro search "against the gods"`.
+  Unquoted multi-word queries now fail with a clear error rather than being silently
+  glued back together.
+- `kuro watch` is an alias of `kuro search` rather than a second implementation of
+  the same flow.
+
+### Removed
+
+- The `ratatui` TUI and its dependency.
+
 ## v0.3.3
 
 ### Fixed

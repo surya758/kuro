@@ -7,7 +7,6 @@ use anyhow::{Context, Result};
 use kuro_core::{orchestrator, Episode, Provider, Series, SeriesStatus};
 use kuro_player::Player;
 use kuro_store::{Bookmark, Bookmarks, History};
-use std::io::Write;
 use std::sync::Arc;
 use std::time::Instant;
 use url::Url;
@@ -15,10 +14,6 @@ use url::Url;
 // ---------------------------------------------------------------------------
 // Shared helpers
 // ---------------------------------------------------------------------------
-
-fn joined(parts: &[String]) -> String {
-    parts.join(" ").trim().to_string()
-}
 
 /// Search every active provider, ranked, recording health along the way.
 pub(crate) async fn search_ranked(app: &mut App, query: &str) -> Result<Vec<Series>> {
@@ -112,35 +107,6 @@ pub(crate) fn provider_for(app: &App, series: &Series) -> Result<Arc<dyn Provide
         .with_context(|| format!("provider `{}` is not loaded", series.provider_id))
 }
 
-/// Prompt for a 1-based selection. Empty input takes the first item.
-fn prompt_index(label: &str, max: usize) -> Result<usize> {
-    if max == 0 {
-        anyhow::bail!("nothing to choose from");
-    }
-    if max == 1 {
-        return Ok(0);
-    }
-
-    loop {
-        print!("{label} [1-{max}, enter for 1]: ");
-        std::io::stdout().flush().ok();
-
-        let mut line = String::new();
-        if std::io::stdin().read_line(&mut line)? == 0 {
-            anyhow::bail!("no selection made");
-        }
-
-        let trimmed = line.trim();
-        if trimmed.is_empty() {
-            return Ok(0);
-        }
-        match trimmed.parse::<usize>() {
-            Ok(n) if n >= 1 && n <= max => return Ok(n - 1),
-            _ => eprintln!("  enter a number between 1 and {max}"),
-        }
-    }
-}
-
 fn print_series_list(series: &[Series]) {
     for (i, s) in series.iter().enumerate() {
         // Most titles already carry their year, so only append it when it's missing.
@@ -223,8 +189,8 @@ fn series_from_history(entry: &kuro_store::HistoryEntry) -> Result<Series> {
 // search
 // ---------------------------------------------------------------------------
 
-pub async fn search(app: &mut App, query: &[String]) -> Result<()> {
-    let query = joined(query);
+pub async fn search(app: &mut App, query: &str) -> Result<()> {
+    let query = query.trim().to_string();
     if query.is_empty() {
         anyhow::bail!("give me something to search for");
     }
@@ -249,54 +215,13 @@ pub async fn search(app: &mut App, query: &[String]) -> Result<()> {
 // watch / play
 // ---------------------------------------------------------------------------
 
-pub async fn watch(app: &mut App, query: &[String]) -> Result<()> {
-    let query = joined(query);
-    let series = search_ranked(app, &query).await?;
-    if series.is_empty() {
-        anyhow::bail!("no results for `{query}`");
-    }
-
-    print_series_list(&series);
-    let choice = prompt_index("Series", series.len())?;
-    let chosen = &series[choice];
-
-    let provider = provider_for(app, chosen)?;
-    let episodes = episodes_of(app, &provider, chosen).await?;
-
-    println!("\n{} — {} episode(s)", chosen.title, episodes.len());
-    for (i, e) in episodes.iter().enumerate() {
-        let title = e.title.as_deref().unwrap_or("");
-        println!("{:>3}. Episode {} {}", i + 1, e.number_label(), title);
-    }
-
-    let ep_choice = prompt_index("Episode", episodes.len())?;
-    let episode = &episodes[ep_choice];
-
-    let start =
-        app.history()?
-            .resume_position(chosen.provider_id.as_str(), &chosen.id, episode.number);
-
-    play(
-        app,
-        PlayRequest {
-            provider,
-            series: chosen,
-            episode,
-            mirror: None,
-            upcoming: crate::playback::upcoming_after(&episodes, episode),
-            start_secs: start,
-        },
-    )
-    .await
-}
-
 pub async fn play_cmd(
     app: &mut App,
-    query: &[String],
+    query: &str,
     ep: Option<EpisodeSpec>,
     mirror: Option<String>,
 ) -> Result<()> {
-    let query = joined(query);
+    let query = query.trim().to_string();
     let results = search_ranked(app, &query).await?;
     let chosen = pick_result(app, &results, &query)?;
 
@@ -378,7 +303,7 @@ fn safe_filename(s: &str) -> String {
 
 pub async fn download(
     app: &mut App,
-    query: &[String],
+    query: &str,
     ep: Option<EpisodeSpec>,
     all: bool,
     mirror: Option<String>,
@@ -390,7 +315,7 @@ pub async fn download(
         anyhow::bail!("yt-dlp is required for downloads — install it with: brew install yt-dlp");
     }
 
-    let query = joined(query);
+    let query = query.trim().to_string();
     let results = search_ranked(app, &query).await?;
     let chosen = pick_result(app, &results, &query)?;
 
@@ -689,7 +614,7 @@ pub async fn bookmark(app: &mut App, action: &BookmarkAction) -> Result<()> {
         }
 
         BookmarkAction::Add { query } => {
-            let query = joined(query);
+            let query = query.trim().to_string();
             let series = search_ranked(app, &query).await?;
             let chosen = series
                 .first()

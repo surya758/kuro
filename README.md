@@ -14,7 +14,7 @@ itself out of rotation until it recovers.
 Type what you want to watch:
 
 ```
-$ kuro against the gods
+$ kuro search "against the gods"
 ⠋ Searching 2 provider(s)… 1.3s
 Found 10 result(s) 1.3s
 
@@ -43,8 +43,7 @@ rolls into the next episode when it ends. `q` steps back a level rather than
 quitting, so a wrong pick costs nothing.
 
 The next couple of episodes are queued into the player's playlist while you watch,
-so IINA's own next/previous controls jump between episodes without coming back to
-kuro.
+so IINA's ⌘→ / ⌘← jump between episodes without coming back to kuro.
 
 Everything is scriptable too — piping or `--json` skips the menus entirely.
 
@@ -116,29 +115,34 @@ macOS only.
 
 ## Usage
 
-`kuro <query>` opens the browse flow shown above. Bare `kuro` opens the full-screen
-TUI instead.
-
-Every step also works without prompts, for scripting or when you already know what
-you want:
+`kuro search` is the way in. **Quote the query** — it is a single argument:
 
 ```sh
-kuro search <query>                       # interactive; a plain list when piped
-kuro play   <query> --ep 15               # play a specific episode
-kuro play   <query> --ep 1-5              # queue a range, played in order
-kuro play   <query> --ep 15 --quality 720p --mirror dailymotion
-kuro next                                 # next unwatched episode
-kuro continue                             # resume where you stopped
-kuro list                                 # watch history (--clear to erase)
-kuro bookmark add <query>                 # follow a series
-
-kuro download <query> --ep 15 -o ~/Anime  # save instead of stream
-kuro download <query> --ep 1-5 -o ~/Anime # a range
-kuro download <query> --all -o ~/Anime    # the whole series, 3 at a time
-kuro download <query> --all -j 6          # ...or six
+kuro search "against the gods"
 ```
 
-Add `--skip` to any play command to jump openings and endings, where [AniSkip] has
+Every other command works without prompts, for scripting or when you already know
+what you want:
+
+```sh
+kuro search "<query>"                      # interactive; a plain list when piped
+kuro play   "<query>" --ep 15              # play a specific episode
+kuro play   "<query>" --ep 1-5             # queue a range, played in order
+kuro play   "<query>" --ep 15 --quality 720p --mirror dailymotion
+kuro next                                  # next unwatched episode
+kuro continue                              # resume where you stopped
+kuro list                                  # watch history (--clear to erase)
+kuro history                               # same thing
+kuro bookmark add "<query>"                # follow a series
+kuro bookmark list                         # what you are following
+
+kuro download "<query>" --ep 15 -o ~/Anime # save instead of stream
+kuro download "<query>" --ep 1-5 -o ~/Anime
+kuro download "<query>" --all -o ~/Anime   # the whole series, 3 at a time
+kuro download "<query>" --all -j 6         # ...or six
+```
+
+Add `--skip` to a play command to jump openings and endings, where [AniSkip] has
 data for the episode. Coverage is crowd-sourced and thin for donghua — kuro says so
 and plays on when there is nothing to skip.
 
@@ -156,13 +160,12 @@ status` shows where and how much; `kuro cache clear` empties it.
 ### Command map
 
 ```
-kuro                       full-screen TUI
-kuro <query>               interactive browse  ← search · pick · play/download
-kuro search <query>        same; plain list when piped or --json
-kuro play <q> --ep 15      direct, no prompts
-kuro download <q> --all    direct, no prompts
-kuro next | continue       resume from watch history
-kuro list | bookmark       history and follows
+kuro search "<query>"       search · pick series · pick episode · play/download
+                            plain list when piped or --json
+kuro play "<q>" --ep 15     direct, no prompts
+kuro download "<q>" --all   direct, no prompts
+kuro next | continue        resume from watch history
+kuro list | bookmark        history and follows
 kuro provider | config | cache | doctor
 ```
 
@@ -261,7 +264,7 @@ Page JavaScript is never executed, which sidesteps the anti-bot layer entirely.
 ## Development
 
 ```sh
-cargo test                # 100 tests, all offline
+cargo test                # 99 tests, all offline
 cargo run -- search foo
 ```
 
@@ -283,8 +286,9 @@ analysis.
 
 ## Status
 
-Working: interactive TUI, search, playback with mirror failover, downloads,
-provider toggling/health, watch history and resume, disk caching.
+Working: interactive search and browse, playback with mirror failover and playlist
+queueing, downloads, provider toggling/health, watch history and resume, disk
+caching.
 
 Not built yet:
 

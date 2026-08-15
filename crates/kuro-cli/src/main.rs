@@ -5,7 +5,6 @@ mod cli;
 mod commands;
 mod flow;
 mod playback;
-mod tui;
 mod ui;
 
 use anyhow::Result;
@@ -57,14 +56,6 @@ async fn run(cli: Cli) -> Result<()> {
         return Ok(());
     }
 
-    // `kuro <query>` is exactly `kuro search <query>`. Normalising to one command
-    // here, rather than adding a second route, is what keeps the two forms from
-    // drifting: the shorthand used to bypass the TTY/`--json` check and print
-    // nothing at all when piped.
-    let command = match cli.command {
-        None if !cli.query.is_empty() => Some(Command::Search { query: cli.query }),
-        other => other,
-    };
 
     let mut app = App::new(
         cli.provider,
@@ -76,14 +67,13 @@ async fn run(cli: Cli) -> Result<()> {
         cli.no_cache,
     )?;
 
-    match &command {
+    match &cli.command {
         // At a terminal, searching leads somewhere: results become a browsable
         // list. Piped or `--json`, it stays a plain printable list.
         Some(Command::Search { query }) if ui::interactive() && !app.json => {
-            flow::run(&mut app, &query.join(" ")).await
+            flow::run(&mut app, query).await
         }
         Some(Command::Search { query }) => commands::search(&mut app, query).await,
-        Some(Command::Watch { query }) => commands::watch(&mut app, query).await,
         Some(Command::Play { query, ep, mirror }) => {
             commands::play_cmd(&mut app, query, *ep, mirror.clone()).await
         }
@@ -105,6 +95,10 @@ async fn run(cli: Cli) -> Result<()> {
         Some(Command::Doctor) => commands::doctor(&mut app).await,
         Some(Command::Completions { .. }) => unreachable!("handled above"),
 
-        None => tui::run(&mut app).await,
+        None => {
+            Cli::command().print_help()?;
+            println!();
+            Ok(())
+        }
     }
 }

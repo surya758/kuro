@@ -99,6 +99,12 @@ against hostile input, and a strict type system that makes provider failures
 Go is an acceptable substitute; TypeScript is acceptable if distribution size is not a
 concern; C++ is not appropriate for this problem.
 
+> **Revisited in v0.4.0:** the full-screen `ratatui` TUI was built and then removed —
+> an inline prompt flow covered the same ground with far less surface. One of the
+> arguments above (a stronger TUI ecosystem) therefore did not end up mattering.
+> The decision still stands on the others: single-binary distribution, memory safety
+> against hostile input, and typed provider failures.
+
 > **Note on the local machine:** at the time of this decision neither `cargo` nor `go`
 > was installed, while `node`, `bun`, `ffmpeg`, `mpv`, and `yt-dlp` were. Rust was set
 > up with a one-time `rustup` install, which took under a minute — it was not a
@@ -125,7 +131,6 @@ Planned, not yet added — listed so the intent is on record:
 
 | Concern | Crate | For |
 |---|---|---|
-| TUI | `ratatui` + `crossterm` | M5 browse/search interface |
 | Fuzzy match | `nucleo-matcher` | Replacing the hand-rolled ranking in `orchestrator::rank` |
 | Caching | `moka` | TTL cache for search/metadata (currently uncached) |
 | Testing | `wiremock`, `insta` | M6 fixture-based scraper regression tests |
@@ -140,7 +145,7 @@ A Cargo **workspace**, so the provider layer cannot reach into the UI and vice v
 kuro/
 ├── Cargo.toml                    # workspace root
 ├── crates/
-│   ├── kuro-cli/                 # binary: clap commands, TUI, output rendering
+│   ├── kuro-cli/                 # binary: clap commands, browse flow, output rendering
 │   ├── kuro-core/                # domain types, Provider trait, orchestration
 │   ├── kuro-providers/           # one module per site + selector configs
 │   ├── kuro-resolver/            # embed host → playable stream URL
@@ -669,7 +674,7 @@ exact selector that failed on `ParseFailure`.
 | **M2** | Playback | Mirror extraction, `YtDlpResolver`, IINA launch, `kuro play` — **first watchable episode** | ✅ done |
 | **M3** | Provider system | Declarative selector loading, toggle commands, health tracking + auto-disable | ✅ done |
 | **M4** | State | History, resume via mpv IPC, bookmarks, `kuro continue` / `kuro next` | ✅ done |
-| **M5** | TUI | `ratatui` search/series/provider screens | ✅ done |
+| **M5** | TUI | `ratatui` search/series/provider screens | ⊘ removed in v0.4.0 — the inline browse flow replaced it |
 | **M6** | Hardening | Second provider, fixture test suite, `kuro doctor`, Homebrew formula | ✅ done |
 | **v1.2** | Downloading | `kuro download`, single episode or whole series | ✅ done (pulled forward) |
 
