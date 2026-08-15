@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use kuro_core::{QualityPref, ResolveError, Stream, StreamKind};
 use serde::Deserialize;
 use std::collections::HashMap;
-use tracing::{debug, warn};
+use tracing::debug;
 use url::Url;
 
 /// Machine-readable progress, one line per tick on stdout.
@@ -243,23 +243,6 @@ impl YtDlpResolver {
     }
 }
 
-/// The highest-bitrate audio-only rendition, used when nothing is pre-muxed.
-///
-/// Audio is a small share of the total, so the best track costs little even beside
-/// a capped video rendition — and picking the worst would undercut the reason these
-/// hosts are worth using.
-fn best_audio(formats: &[YtDlpFormat]) -> Option<&YtDlpFormat> {
-    formats
-        .iter()
-        .filter(|f| f.has_audio() && !f.has_video() && f.url.is_some())
-        .max_by(|a, b| {
-            a.tbr
-                .unwrap_or(0.0)
-                .partial_cmp(&b.tbr.unwrap_or(0.0))
-                .unwrap_or(std::cmp::Ordering::Equal)
-        })
-}
-
 /// A yt-dlp format expression for the requested quality.
 ///
 /// Each falls back to a pre-muxed stream (`/b`) because many of these hosts serve
@@ -331,7 +314,7 @@ impl StreamResolver for YtDlpResolver {
                 height: f.height,
                 bitrate_kbps: f.tbr.map(|t| t as u32),
                 headers: f.http_headers.clone().unwrap_or_default(),
-                audio_url: None,
+                ytdl_format: None,
             })
         };
 
@@ -344,39 +327,22 @@ impl StreamResolver for YtDlpResolver {
             .filter_map(to_stream)
             .collect();
 
-        // Nothing pre-muxed: pair each video rendition with the best audio track and
-        // let the player mux them. Hosts serving high-bitrate video — 4K60 among
-        // them — publish the tracks separately, so this is their normal shape.
-        //
-        // Handing over the master playlist instead would look simpler, but it plays
-        // silent when the player fails to pair the tracks, and surrenders the
-        // requested quality to the player when it succeeds.
-        if streams.is_empty() {
-            let audio = best_audio(&output.formats).and_then(|f| {
-                let url = Url::parse(f.url.as_ref()?).ok()?;
-                Some(url)
+        // Nothing pre-muxed. Rather than pick a rendition, hand the page URL back
+        // and let the player's extractor resolve it: these CDNs serve individual
+        // rendition URLs slowly and unreliably to a plain HTTP client, and an
+        // external audio track cannot be attached through the player's command line.
+        if streams.is_empty() && output.formats.iter().any(|f| f.has_video()) {
+            debug!(%url, "no muxed format; deferring resolution to the player");
+            streams.push(Stream {
+                url: url.clone(),
+                kind: StreamKind::Hls,
+                // Unknown until the player resolves it; guessing would misreport
+                // what actually plays.
+                height: None,
+                bitrate_kbps: None,
+                headers: HashMap::new(),
+                ytdl_format: Some(format_selector(pref)),
             });
-
-            streams = output
-                .formats
-                .iter()
-                .filter(|f| f.has_video())
-                .filter_map(to_stream)
-                .map(|mut s| {
-                    s.audio_url = audio.clone();
-                    s
-                })
-                .collect();
-
-            match (streams.is_empty(), audio.is_some()) {
-                (false, true) => {
-                    debug!(%url, "no muxed format; pairing video with a separate audio track")
-                }
-                (false, false) => {
-                    warn!(%url, "no muxed format and no audio track; playback will be silent")
-                }
-                _ => {}
-            }
         }
 
         // Some extractors return a single top-level URL instead of a format list.
@@ -388,7 +354,7 @@ impl StreamResolver for YtDlpResolver {
                     height: None,
                     bitrate_kbps: None,
                     headers: HashMap::new(),
-                    audio_url: None,
+                    ytdl_format: None,
                 });
             }
         }
@@ -414,7 +380,7 @@ mod tests {
             height: Some(height),
             bitrate_kbps: None,
             headers: HashMap::new(),
-            audio_url: None,
+            ytdl_format: None,
         }
     }
 

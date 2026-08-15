@@ -73,15 +73,17 @@ impl IinaPlayer {
             args.push(format!("--mpv-http-header-fields-append={name}: {value}"));
         }
 
-        // Video and audio arrive as separate renditions on hosts that publish no
-        // muxed format; without this the picture plays in silence.
-        //
-        // `audio-files-append` rather than `audio-file`: the latter is a deprecated
-        // alias, and while mpv still honours it directly, passing it through
-        // iina-cli drops the track without complaint. Same reason the headers above
-        // use the `-append` form of their list option.
-        if let Some(audio) = &stream.audio_url {
-            args.push(format!("--mpv-audio-files-append={audio}"));
+        // Sources with no muxed rendition are resolved by the player instead. IINA
+        // ships its own extractor, old enough to fail on these hosts, so mpv's hook
+        // is pointed at the one kuro already depends on.
+        if let Some(format) = &stream.ytdl_format {
+            args.push(format!("--mpv-ytdl-format={format}"));
+            if let Some(ytdl) = which_on_path("yt-dlp") {
+                args.push(format!(
+                    "--mpv-script-opt=ytdl_hook-ytdl_path={}",
+                    ytdl.display()
+                ));
+            }
         }
 
         if let Some(start) = opts.start_secs.filter(|s| *s > 0) {
@@ -195,7 +197,7 @@ mod tests {
             height: Some(1080),
             bitrate_kbps: None,
             headers,
-            audio_url: None,
+            ytdl_format: None,
         }
     }
 

@@ -186,14 +186,16 @@ pub struct Stream {
     /// Headers the CDN requires. Rumble and Dailymotion both key on `Referer`;
     /// these are forwarded to the player rather than being used here.
     pub headers: HashMap<String, String>,
-    /// Separate audio track, when [`Stream::url`] carries video alone.
+    /// Ask the player to resolve [`Stream::url`] itself, using this format selector.
     ///
-    /// High-bitrate hosts publish video and audio as independent renditions with
-    /// nothing pre-muxed. Naming the audio explicitly beats handing over the master
-    /// playlist and hoping the player pairs them — it plays silent when it does not,
-    /// and leaves the requested quality up to the player when it does.
+    /// Set only when the host publishes no muxed rendition. Handing such a host's
+    /// pre-resolved rendition URLs to the player goes wrong twice over: its CDN
+    /// serves them slowly and unreliably to a plain HTTP client, and an external
+    /// audio track cannot be attached alongside them through the command line.
+    /// Giving the player the page URL lets its extractor fetch a proper manifest and
+    /// pair the tracks, which is also what makes playback start promptly.
     #[serde(default)]
-    pub audio_url: Option<Url>,
+    pub ytdl_format: Option<String>,
 }
 
 impl Stream {
