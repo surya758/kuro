@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.5.0
+
+### Added
+
+- **New provider: anidb.** Its backend is JSON and it serves its own HLS rather than
+  embedding a third-party player, so there is no Rumble/Dailymotion middleman to
+  break — and it carries multiple audio languages, which appear as mirrors, making
+  mirror failover double as sub/dub choice. 1080p throughout.
+- **Providers may declare a JSON format.** Selector files can now name fields
+  instead of CSS selectors for episode and mirror lists, and derive API URLs from a
+  series link with `{slug}`/`{id}`. Sites that render episodes client-side no longer
+  need bespoke Rust.
+- **An optional external fetcher.** Providers behind a challenge that inspects the
+  TLS handshake can set `impersonate = true` and be fetched through
+  [curl-impersonate](https://github.com/lexiforest/curl-impersonate). It is optional
+  in the same way `yt-dlp` is: absent, it costs you that one provider and nothing
+  else. `kuro doctor` reports it only when a provider actually needs it, and
+  `general.impersonate_command` points at a binary that is not on `PATH`.
+- **Search cards may be their own link.** A card layout that wraps the whole tile in
+  one `<a>` no longer needs a nested selector that cannot match.
+- **Script-configured players.** `selectors.embed.script_key` reads a stream URL out
+  of a player config object for embeds built by JavaScript rather than an iframe.
+
 ## v0.4.6
 
 ### Fixed

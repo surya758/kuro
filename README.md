@@ -55,6 +55,7 @@ Everything is scriptable too — piping or `--json` skips the menus entirely.
 - [Usage](#usage)
   - [Command map](#command-map)
 - [Providers](#providers)
+  - [anidb and curl-impersonate](#anidb-and-curl-impersonate)
   - [Adding a site](#adding-a-site)
 - [Configuration](#configuration)
 - [How it works](#how-it-works)
@@ -181,7 +182,10 @@ kuro provider | config | cache | doctor
 
 ## Providers
 
-Bundled: **luciferdonghua**, **donghuastream**.
+Bundled: **luciferdonghua**, **donghuastream**, **anidb**.
+
+`anidb` needs one extra binary — see [below](#anidb-and-curl-impersonate). The other
+two work out of the box.
 
 ```sh
 kuro provider list                        # state + health for each
@@ -193,6 +197,32 @@ kuro provider reload                      # re-read selector files
 
 A provider that fails 3 times in a row disables itself and re-probes every 30
 minutes until the site is back. Both numbers are configurable.
+
+### anidb and curl-impersonate
+
+anidb.app is behind a challenge that inspects the TLS handshake, so no ordinary HTTP
+client reaches it — headers make no difference. Fetching it needs
+[curl-impersonate](https://github.com/lexiforest/curl-impersonate), which performs a
+browser-shaped handshake. It is not in Homebrew core, so install it by hand:
+
+```sh
+# Apple Silicon; use x86_64-macos on Intel
+curl -LO https://github.com/lexiforest/curl-impersonate/releases/latest/download/curl-impersonate-v2.1.0.arm64-macos.tar.gz
+mkdir -p ~/.local/bin && tar xzf curl-impersonate-*.tar.gz -C ~/.local/bin
+export PATH="$HOME/.local/bin:$PATH"          # add to your shell profile
+kuro doctor                                   # should report: ✓ impersonate
+```
+
+Not on `PATH`? Point kuro at it instead:
+
+```toml
+[general]
+impersonate_command = "/Users/you/.local/bin/curl-impersonate"
+```
+
+Only anidb's scraping calls go through it. Video comes from a CDN that is not
+challenged, so playback is ordinary. Without the binary, anidb fails and the other
+providers are unaffected.
 
 ### Adding a site
 
