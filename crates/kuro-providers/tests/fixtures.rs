@@ -302,6 +302,40 @@ mod donghuastream {
         assert!(details.synopsis.as_deref().map(str::len).unwrap_or(0) > 40);
     }
 
+    const EMPTY_EPLIST_HTML: &str =
+        include_str!("../../../tests/fixtures/donghuastream/series-empty-eplist.html");
+
+    #[test]
+    fn an_unpopulated_episode_list_falls_back_to_the_latest_episode_link() {
+        // Regression: this series renders `div.eplister` with an empty `<ul>`, which
+        // read as "the site's markup changed" and made the series unwatchable even
+        // though the page links its latest episode.
+        let episodes = parse::parse_episodes(
+            EMPTY_EPLIST_HTML,
+            &spec().selectors.episodes,
+            "against-the-gods-ni-tian-xie-shen-3d1",
+            &base(),
+        )
+        .expect("an empty list must not be an error");
+
+        assert_eq!(episodes.len(), 1, "the latest-episode link is recovered");
+        assert_eq!(episodes[0].number, 30.0);
+        // The sibling "First Episode" link is a dead `#`, and must not be picked up.
+        assert!(episodes[0].url.as_str().contains("episode-30"));
+    }
+
+    #[test]
+    fn a_missing_episode_container_is_still_a_failure() {
+        let mut selectors = spec().selectors.episodes;
+        selectors.container = Some("div.this-container-is-gone".to_string());
+        selectors.fallback = None;
+
+        assert!(matches!(
+            parse::parse_episodes(EMPTY_EPLIST_HTML, &selectors, "x", &base()),
+            Err(kuro_core::ProviderError::ParseFailure { .. })
+        ));
+    }
+
     #[test]
     fn base64_mirrors_resolve_inline_without_a_second_fetch() {
         let spec = spec();

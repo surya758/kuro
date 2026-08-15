@@ -280,7 +280,41 @@ pub fn parse_episodes(
         });
     }
 
+    // Some series render the list container empty but still link their latest
+    // episode elsewhere. Recovering it is the difference between the series being
+    // watchable and not.
     if out.is_empty() {
+        if let Some(fallback) = &sel.fallback {
+            let fallback_sel = compile(fallback)?;
+            for item in doc.select(&fallback_sel) {
+                let Some(href) = item.value().attr("href") else {
+                    continue;
+                };
+                let Ok(url) = base.join(href.trim()) else {
+                    continue;
+                };
+                let Some(number) = episode_number_from_url(&url) else {
+                    continue;
+                };
+                out.push(Episode {
+                    series_id: series_id.to_string(),
+                    number,
+                    title: None,
+                    url,
+                });
+            }
+        }
+    }
+
+    if out.is_empty() {
+        // An unpopulated list is a normal state for a series the site has not filled
+        // in yet; only a missing container means the scraper is actually broken.
+        if let Some(container) = &sel.container {
+            let container_sel = compile(container)?;
+            if doc.select(&container_sel).next().is_some() {
+                return Ok(out);
+            }
+        }
         return Err(ProviderError::parse(&sel.item, "episode list"));
     }
 

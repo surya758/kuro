@@ -1,5 +1,17 @@
 # Changelog
 
+## v0.4.2
+
+### Fixed
+
+- **A series whose episode list is empty was reported as a broken scraper.** Some
+  series render the list container with nothing in it; that read as "the site's
+  markup changed", which was both wrong and counted against provider health. Same
+  class of bug as the empty-search-results one fixed in v0.3.2, now handled the same
+  way — provider specs name the episode container.
+- **Those series are watchable again.** When the list is empty, the latest-episode
+  link elsewhere on the page is used instead, so the series is no longer a dead end.
+
 ## v0.4.1
 
 ### Changed

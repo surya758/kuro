@@ -29,9 +29,13 @@ genres   = "div.genxed a"
 info_row = "div.spe span"
 
 [selectors.episodes]
-item   = "div.eplister ul li a"
-number = "div.epl-num"
-title  = "div.epl-title"
+item      = "div.eplister ul li a"
+container = "div.eplister"
+number    = "div.epl-num"
+title     = "div.epl-title"
+# Series whose list has not been filled in still link their latest episode here.
+# `href^=http` skips the sibling "First Episode" link, which is a dead `#`.
+fallback  = 'div.lastend a[href^="http"]'
 
 # Options hold `/v/{n}/` page URLs, not embeds — each needs a further fetch.
 [selectors.mirrors]

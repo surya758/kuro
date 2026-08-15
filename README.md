@@ -275,7 +275,7 @@ Page JavaScript is never executed, which sidesteps the anti-bot layer entirely.
 ## Development
 
 ```sh
-cargo test                # 101 tests, all offline
+cargo test                # 103 tests, all offline
 cargo run -- search foo
 ```
 

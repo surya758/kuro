@@ -76,6 +76,19 @@ pub struct SeriesSelectors {
 #[serde(deny_unknown_fields)]
 pub struct EpisodeSelectors {
     pub item: String,
+    /// The element that *holds* the episode list.
+    ///
+    /// Same role as [`SearchSelectors::container`]: a series whose list has not been
+    /// populated still renders this, so its presence means "no episodes yet" rather
+    /// than "the markup changed".
+    #[serde(default)]
+    pub container: Option<String>,
+    /// Where to look when the list is empty.
+    ///
+    /// Some series render an unpopulated list but still link the latest episode
+    /// elsewhere on the page; without this they would be unwatchable.
+    #[serde(default)]
+    pub fallback: Option<String>,
     #[serde(default)]
     pub number: Option<String>,
     #[serde(default)]
