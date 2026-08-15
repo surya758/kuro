@@ -56,9 +56,9 @@ impl ExternalFetcher {
 
     /// GET `url`, returning the body.
     ///
-    /// `--fail-with-body` keeps the response text on an HTTP error so the caller
-    /// can still classify a challenge page, while making the exit status reflect
-    /// the status code.
+    /// The status is appended to the body via `--write-out` rather than inferred
+    /// from the exit code, which cannot tell a challenge from a missing page — and
+    /// that difference decides whether the provider is penalised.
     pub async fn get(
         &self,
         url: &Url,

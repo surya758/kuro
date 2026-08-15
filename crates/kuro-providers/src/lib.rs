@@ -6,6 +6,7 @@
 
 pub mod declarative;
 pub mod hosts;
+pub mod json;
 pub mod parse;
 pub mod registry;
 pub mod spec;

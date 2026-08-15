@@ -1100,6 +1100,7 @@ dependencies = [
  "once_cell",
  "scraper",
  "serde",
+ "serde_json",
  "toml",
  "tracing",
  "url",

@@ -419,22 +419,35 @@ pub fn parse_mirrors(
 /// `<meta itemprop="embedUrl">` — without that fallback those mirrors are invisible
 /// to the scraper even though they play perfectly well.
 pub fn parse_embed(html: &str, sel: &EmbedSelectors, base: &Url) -> Result<Url, ProviderError> {
-    let doc = Html::parse_document(html);
+    // Checked before the DOM, and deliberately not through `video_url`: a script
+    // key holds the stream itself, served from the provider's own CDN, so the
+    // known-third-party-host allowlist would reject exactly the right answer.
+    if let Some(key) = &sel.script_key {
+        if let Some(raw) = script_value(html, key) {
+            if let Ok(url) = base.join(&raw) {
+                return Ok(url);
+            }
+        }
+    }
 
-    let iframe_sel = compile(&sel.iframe)?;
+    let doc = Html::parse_document(html);
     let mut candidates_seen = false;
 
-    for iframe in doc.select(&iframe_sel) {
-        let Some(src) = ["src", "data-src", "data-litespeed-src"]
-            .iter()
-            .find_map(|a| iframe.value().attr(a))
-        else {
-            continue;
-        };
-        candidates_seen = true;
+    // Empty for providers whose player is built by script rather than an iframe.
+    if !sel.iframe.is_empty() {
+        let iframe_sel = compile(&sel.iframe)?;
+        for iframe in doc.select(&iframe_sel) {
+            let Some(src) = ["src", "data-src", "data-litespeed-src"]
+                .iter()
+                .find_map(|a| iframe.value().attr(a))
+            else {
+                continue;
+            };
+            candidates_seen = true;
 
-        if let Some(url) = video_url(src, base) {
-            return Ok(url);
+            if let Some(url) = video_url(src, base) {
+                return Ok(url);
+            }
         }
     }
 
@@ -452,16 +465,61 @@ pub fn parse_embed(html: &str, sel: &EmbedSelectors, base: &Url) -> Result<Url, 
         }
     }
 
+    let what = if sel.iframe.is_empty() {
+        sel.script_key
+            .clone()
+            .unwrap_or_else(|| "iframe".to_string())
+    } else {
+        sel.iframe.clone()
+    };
+
     if candidates_seen {
         // Candidates exist but none was a known video host — either a new host needs
         // adding to the allowlist, or this mirror is dead and serving only ads.
         Err(ProviderError::parse(
-            &sel.iframe,
+            what,
             "video embed (no candidate pointed at a known video host)",
         ))
     } else {
-        Err(ProviderError::parse(&sel.iframe, "video embed"))
+        Err(ProviderError::parse(what, "video embed"))
     }
+}
+
+/// Value of a `key: "…"` pair in a script-configured player.
+///
+/// Hand-rolled rather than a regex: the shapes in the wild are `file: '…'`,
+/// `file:"…"` and `"file": "…"`, which one small scanner covers without pulling a
+/// regex engine and its Unicode tables into a size-optimised binary.
+fn script_value(html: &str, key: &str) -> Option<String> {
+    let mut from = 0;
+    while let Some(offset) = html[from..].find(key) {
+        from += offset + key.len();
+
+        let rest = html[from..].trim_start();
+        // The key itself is often quoted, as in `"file": "…"`.
+        let rest = rest.strip_prefix('"').unwrap_or(rest).trim_start();
+        let Some(rest) = rest.strip_prefix(':') else {
+            continue;
+        };
+        let rest = rest.trim_start();
+
+        let Some(quote) = rest.chars().next() else {
+            continue;
+        };
+        if quote != '"' && quote != '\'' {
+            continue;
+        }
+
+        let body = &rest[quote.len_utf8()..];
+        if let Some(end) = body.find(quote) {
+            let value = &body[..end];
+            if !value.is_empty() {
+                // JSON-escaped slashes are common when the page embeds a payload.
+                return Some(value.replace("\\/", "/"));
+            }
+        }
+    }
+    None
 }
 
 /// Decode a base64 mirror payload into HTML.
@@ -498,9 +556,46 @@ mod tests {
     fn embed_selectors() -> EmbedSelectors {
         EmbedSelectors {
             iframe: "iframe".to_string(),
+            script_key: None,
             meta: Some("meta[itemprop=embedUrl]".to_string()),
             meta_attr: "content".to_string(),
         }
+    }
+
+    #[test]
+    fn a_script_configured_player_yields_its_stream_url() {
+        let sel = EmbedSelectors {
+            iframe: String::new(),
+            script_key: Some("file".to_string()),
+            meta: None,
+            meta_attr: "content".to_string(),
+        };
+        let html = r#"<script>jwplayer("p").setup({ file: 'https://hls.example.test/a/master.m3u8', type: 'hls' });</script>"#;
+        let url = parse_embed(html, &sel, &Url::parse("https://example.test/").unwrap()).unwrap();
+        assert_eq!(url.as_str(), "https://hls.example.test/a/master.m3u8");
+    }
+
+    #[test]
+    fn script_keys_are_found_in_every_shape_sites_use() {
+        for html in [
+            r#"{ file: 'https://a.test/x.m3u8' }"#,
+            r#"{ file:"https://a.test/x.m3u8" }"#,
+            r#"{ "file": "https://a.test/x.m3u8" }"#,
+            r#"{ "file" : "https:\/\/a.test\/x.m3u8" }"#,
+        ] {
+            assert_eq!(
+                script_value(html, "file").as_deref(),
+                Some("https://a.test/x.m3u8"),
+                "failed on {html}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_key_that_is_never_assigned_yields_nothing() {
+        // The word appearing in prose must not be mistaken for a config entry.
+        assert_eq!(script_value("the file was missing", "file"), None);
+        assert_eq!(script_value("", "file"), None);
     }
 
     #[test]

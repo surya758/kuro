@@ -30,6 +30,25 @@ pub struct Endpoints {
     /// taken from the page's `href`, never built from this.
     #[serde(default)]
     pub series: Option<String>,
+    /// Where the episode list lives, when it is not the series page.
+    ///
+    /// Sites with a JSON backend serve episodes from an API keyed by a numeric id
+    /// rather than rendering them into the series HTML. Supports `{slug}` for the
+    /// full series id and `{id}` for its trailing digits — `solo-leveling-4883`
+    /// gives `4883`.
+    #[serde(default)]
+    pub episodes: Option<String>,
+}
+
+/// How a response should be read.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Format {
+    /// CSS selectors against markup.
+    #[default]
+    Html,
+    /// Field names against a JSON document.
+    Json,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -75,7 +94,20 @@ pub struct SeriesSelectors {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct EpisodeSelectors {
+    /// Whether the fields below are CSS selectors or JSON keys.
+    #[serde(default)]
+    pub format: Format,
+    /// CSS selector for each row, or the JSON key holding the episode array.
     pub item: String,
+    /// JSON only: field whose value builds each episode's URL via [`Self::url`].
+    #[serde(default)]
+    pub id: Option<String>,
+    /// JSON only: template for an episode's URL, with `{id}` substituted.
+    ///
+    /// JSON episode lists carry ids rather than links, so the URL that later
+    /// yields mirrors has to be constructed rather than read.
+    #[serde(default)]
+    pub url: Option<String>,
     /// The element that *holds* the episode list.
     ///
     /// Same role as [`SearchSelectors::container`]: a series whose list has not been
@@ -98,7 +130,18 @@ pub struct EpisodeSelectors {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct MirrorSelectors {
+    /// Whether the fields below are CSS selectors or JSON keys.
+    #[serde(default)]
+    pub format: Format,
+    /// CSS selector for each mirror `<option>`. Unused when `format` is JSON.
+    #[serde(default)]
     pub option: String,
+    /// JSON only: key holding the array of mirrors.
+    #[serde(default)]
+    pub item: Option<String>,
+    /// JSON only: field holding the embed URL.
+    #[serde(default)]
+    pub value: Option<String>,
     #[serde(default = "default_value_attr")]
     pub value_attr: String,
     #[serde(default)]
@@ -135,7 +178,15 @@ fn default_value_attr() -> String {
 #[serde(deny_unknown_fields)]
 pub struct EmbedSelectors {
     /// Iframe-based players. Checked first — this is the actual player element.
+    #[serde(default)]
     pub iframe: String,
+    /// Key of a script-configured player's stream URL, e.g. `file` in
+    /// `file: 'https://…/master.m3u8'`.
+    ///
+    /// For players built by JavaScript rather than an iframe, where the stream URL
+    /// appears in a config object and no element holds it.
+    #[serde(default)]
+    pub script_key: Option<String>,
     /// Optional fallback for players injected by JavaScript rather than an iframe.
     /// Dailymotion mirrors expose only `<meta itemprop="embedUrl" content="…">`,
     /// so without this those mirrors look dead to the scraper.

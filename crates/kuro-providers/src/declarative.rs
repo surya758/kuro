@@ -4,8 +4,9 @@
 //! a search page, a series page with an episode list, and an episode page with a
 //! mirror `<select>`. Those need no Rust at all — only a spec.
 
+use crate::json;
 use crate::parse;
-use crate::spec::ProviderSpec;
+use crate::spec::{Format, ProviderSpec};
 use async_trait::async_trait;
 use kuro_core::cache::ttl;
 use kuro_core::{
@@ -118,13 +119,24 @@ impl Provider for DeclarativeProvider {
         ctx: &FetchCtx,
         series: &Series,
     ) -> Result<Vec<Episode>, ProviderError> {
-        let html = self.get_cached(ctx, &series.url, ttl::EPISODES).await?;
-        parse::parse_episodes(
-            &html,
-            &self.spec.selectors.episodes,
-            &series.id,
-            &self.base_url,
-        )
+        // A JSON backend serves episodes from its own endpoint, keyed by id, rather
+        // than rendering them into the series page.
+        let url = match &self.spec.endpoints.episodes {
+            Some(template) => {
+                let path = json::fill_template(template, &series.id);
+                self.base_url.join(&path).map_err(|e| {
+                    ProviderError::Config(format!("bad episodes endpoint `{path}`: {e}"))
+                })?
+            }
+            None => series.url.clone(),
+        };
+
+        let body = self.get_cached(ctx, &url, ttl::EPISODES).await?;
+        let sel = &self.spec.selectors.episodes;
+        match sel.format {
+            Format::Json => json::parse_episodes(&body, sel, &series.id, &self.base_url),
+            Format::Html => parse::parse_episodes(&body, sel, &series.id, &self.base_url),
+        }
     }
 
     async fn mirrors(
@@ -132,14 +144,18 @@ impl Provider for DeclarativeProvider {
         ctx: &FetchCtx,
         episode: &Episode,
     ) -> Result<Vec<Mirror>, ProviderError> {
-        let html = self.get_cached(ctx, &episode.url, ttl::MIRRORS).await?;
-        parse::parse_mirrors(
-            &html,
-            &self.spec.selectors.mirrors,
-            &self.spec.selectors.embed,
-            &self.base_url,
-            &episode.url,
-        )
+        let body = self.get_cached(ctx, &episode.url, ttl::MIRRORS).await?;
+        let sel = &self.spec.selectors.mirrors;
+        match sel.format {
+            Format::Json => json::parse_mirrors(&body, sel, &self.base_url),
+            Format::Html => parse::parse_mirrors(
+                &body,
+                sel,
+                &self.spec.selectors.embed,
+                &self.base_url,
+                &episode.url,
+            ),
+        }
     }
 
     async fn embed_url(&self, ctx: &FetchCtx, mirror: &Mirror) -> Result<Url, ProviderError> {
