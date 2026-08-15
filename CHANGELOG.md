@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.6.1
+
+### Added
+
+- **New provider: ongoingdonghua.** An Odoo-hosted site, so it uses Odoo's own site
+  search and puts one embed per episode in a small script object rather than a
+  mirror `<select>`. Server-rendered throughout and plays through Rumble, which kuro
+  already handles — no new machinery beyond the item below.
+- **Providers may declare a single implicit mirror.** Omitting the mirror `option`
+  selector says "this episode page is the mirror", which also saves a fetch. Sites
+  that carry one embed per episode no longer need a mirror list they do not have.
+
+
 ## v0.6.0
 
 ### Added

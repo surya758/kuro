@@ -1,0 +1,44 @@
+# Ongoing Donghua.
+#
+# An Odoo-hosted site, so nothing here resembles the WordPress providers: search is
+# Odoo's own site search, and each episode page carries a small `servers` script
+# object rather than a mirror `<select>`.
+#
+# Verified chain:
+#   /website/search?search=      -> HTML  a.dropdown-item, series and episodes mixed
+#   /{slug}                      -> HTML  a[href*="-episode-"]
+#   /{slug}-episode-{n}          -> HTML  servers = { rumble: { url: "…" }, … }
+#   rumble.com/embed/{id}        -> yt-dlp
+
+id           = "ongoingdonghua"
+display_name = "Ongoing Donghua"
+base_url     = "https://ongoingdonghua.odoo.com"
+
+[endpoints]
+search = "/website/search?search={query}"
+series = "/{slug}"
+
+[selectors.search]
+# Odoo searches the whole site, so results mix three things: series pages, their
+# episode pages, and ordinary pages like the catalogue. Only the first are series.
+item      = 'a.dropdown-item:not([href*="-episode-"]):not([href="/donghua-list"]):not([href="/movies-ovas"]):not([href="/contactus"])'
+container = "div.oe_website_search"
+title     = "div.h6"
+# No `url`: the result *is* the anchor.
+
+[selectors.series]
+
+[selectors.episodes]
+item = 'a[href*="-episode-"]'
+
+# One embed per episode, so there is no mirror list — the episode page is the
+# mirror, which an absent `option` selector declares.
+[selectors.mirrors]
+
+# The player is built by script from a `servers` object; the first non-empty
+# `url:` in it is the live host, the rest being empty placeholders.
+[selectors.embed]
+script_key = "url"
+
+[request]
+referer = "https://ongoingdonghua.odoo.com/"

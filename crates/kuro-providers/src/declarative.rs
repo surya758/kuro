@@ -144,8 +144,21 @@ impl Provider for DeclarativeProvider {
         ctx: &FetchCtx,
         episode: &Episode,
     ) -> Result<Vec<Mirror>, ProviderError> {
-        let body = self.get_cached(ctx, &episode.url, ttl::MIRRORS).await?;
         let sel = &self.spec.selectors.mirrors;
+
+        // Sites with one embed per episode have no mirror list to parse — the
+        // episode page *is* the mirror. Declaring no `option` selector says so, and
+        // answering before the fetch keeps it to a single request.
+        if sel.format == Format::Html && sel.option.is_empty() {
+            return Ok(vec![Mirror {
+                index: 0,
+                label: self.spec.display_name.clone(),
+                page_url: episode.url.clone(),
+                embed_url: None,
+            }]);
+        }
+
+        let body = self.get_cached(ctx, &episode.url, ttl::MIRRORS).await?;
         match sel.format {
             Format::Json => json::parse_mirrors(&body, sel, &self.base_url),
             Format::Html => parse::parse_mirrors(

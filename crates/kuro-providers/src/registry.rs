@@ -23,6 +23,10 @@ const BUILTIN_SPECS: &[(&str, &str)] = &[
         include_str!("../../../providers.d/donghuastream.toml"),
     ),
     ("anidb", include_str!("../../../providers.d/anidb.toml")),
+    (
+        "ongoingdonghua",
+        include_str!("../../../providers.d/ongoingdonghua.toml"),
+    ),
 ];
 
 pub struct LoadedProvider {
