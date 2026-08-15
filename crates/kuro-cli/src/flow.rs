@@ -1,6 +1,6 @@
 //! The interactive progression: search → series → episode → action.
 //!
-//! Reached by `kuro <query>` or `kuro search <query>` at a terminal. Every step is
+//! Reached by `kuro search "<query>"` at a terminal. Every step is
 //! cancellable with `q`/Esc, which walks back one level rather than exiting, so
 //! picking the wrong series is not a dead end.
 
@@ -177,7 +177,7 @@ async fn action_menu(
             Item::new("▶  Play"),
             Item::new("⬇  Download this episode"),
             Item::new("⬇  Download a range…"),
-            Item::with_hint("⚙  Quality", quality_label(app.quality).to_string()),
+            Item::with_hint("⚙  Max quality", quality_label(app.quality).to_string()),
             Item::new("☆  Bookmark series"),
             Item::new("←  Back to episodes"),
         ];
@@ -240,6 +240,20 @@ fn quality_label(q: QualityPref) -> &'static str {
     }
 }
 
+/// Why a rung may not deliver what its name suggests.
+///
+/// The list is fixed rather than probed from the host: the ladder is only known
+/// after a mirror has been resolved, which costs a `yt-dlp` round-trip and happens
+/// after this menu. Flagging the rungs that these embed hosts realistically never
+/// serve keeps the menu honest without that cost, and without hardcoding a ceiling
+/// that a future provider might exceed.
+fn quality_caveat(q: QualityPref) -> Option<&'static str> {
+    match q {
+        QualityPref::P2160 | QualityPref::P1440 => Some("rarely available"),
+        _ => None,
+    }
+}
+
 fn pick_quality(current: QualityPref) -> Result<QualityPref> {
     const CHOICES: [QualityPref; 8] = [
         QualityPref::Best,
@@ -254,20 +268,28 @@ fn pick_quality(current: QualityPref) -> Result<QualityPref> {
 
     let items: Vec<Item> = CHOICES
         .iter()
-        .map(|q| {
-            if *q == current {
-                Item::with_hint(quality_label(*q), "current")
-            } else {
-                Item::new(quality_label(*q))
+        .map(|q| match (*q == current, quality_caveat(*q)) {
+            (true, Some(caveat)) => {
+                Item::with_hint(quality_label(*q), format!("current · {caveat}"))
             }
+            (true, None) => Item::with_hint(quality_label(*q), "current"),
+            (false, Some(caveat)) => Item::with_hint(quality_label(*q), caveat),
+            (false, None) => Item::new(quality_label(*q)),
         })
         .collect();
 
-    Ok(match ui::select("Quality", &items)? {
-        Choice::Picked(i) => CHOICES[i],
-        // Cancelling a submenu keeps the existing setting.
-        Choice::Cancelled => current,
-    })
+    // Named "max" throughout: this is a ceiling, and the closest rung at or below
+    // it is what actually plays.
+    Ok(
+        match ui::select(
+            "Max quality — you get the best the host has at or below this",
+            &items,
+        )? {
+            Choice::Picked(i) => CHOICES[i],
+            // Cancelling a submenu keeps the existing setting.
+            Choice::Cancelled => current,
+        },
+    )
 }
 
 fn prompt_range(episodes: &[Episode]) -> Result<Option<Vec<Episode>>> {

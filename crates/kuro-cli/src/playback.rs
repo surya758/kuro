@@ -7,7 +7,7 @@
 use crate::app::{require_player, App};
 use anyhow::{Context, Result};
 use futures::future::join_all;
-use kuro_core::{Episode, Mirror, Provider, Series, Stream};
+use kuro_core::{Episode, Mirror, Provider, QualityPref, Series, Stream};
 use kuro_player::{ipc, ipc_socket_path, PlaybackOpts, Player};
 use kuro_providers::hosts;
 use std::sync::Arc;
@@ -407,6 +407,22 @@ fn spawn_progress_recorder(
     })
 }
 
+/// Explains a rendition that came back below what was asked for.
+///
+/// A specific quality is a ceiling, not a demand: the resolver caps the format
+/// selector at the requested height and then takes the closest rung at or below it,
+/// so asking for 2160p on a host whose ladder stops at 1080p plays rather than
+/// fails. That is the right behaviour, but silently handing back something lower
+/// reads as a bug — most of these embed hosts never exceed 1080p. Say so once here.
+fn clamp_note(requested: QualityPref, actual: Option<u32>) -> String {
+    match (requested.target_height(), actual) {
+        (Some(target), Some(actual)) if actual < target => {
+            format!(" — {target}p requested, host's best is {actual}p")
+        }
+        _ => String::new(),
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 async fn launch(
     app: &mut App,
@@ -419,6 +435,7 @@ async fn launch(
     start_secs: Option<u64>,
 ) -> Result<()> {
     let title = format!("{} · Episode {}", series.title, episode.number_label());
+    let requested = app.quality;
 
     let skip = if app.skip {
         resolve_skip(app, series, episode).await
@@ -456,7 +473,12 @@ async fn launch(
     eprintln!(
         "{}  {title}  {}",
         crate::ui::style::accent("▶"),
-        crate::ui::style::dim(format!("[{} · {}]", mirror.label, stream.quality_label())),
+        crate::ui::style::dim(format!(
+            "[{} · {}{}]",
+            mirror.label,
+            stream.quality_label(),
+            clamp_note(requested, stream.height),
+        )),
     );
 
     // The ⏪/⏩ buttons on IINA's on-screen controls are seek/speed, not playlist
@@ -562,5 +584,35 @@ mod tests {
     fn empty_preference_preserves_page_order() {
         let ordered = order_by_preference(vec![mirror("Rumble"), mirror("Dailymotion")], &[]);
         assert_eq!(labels(&ordered), vec!["Rumble", "Dailymotion"]);
+    }
+
+    #[test]
+    fn asking_above_the_host_ladder_is_explained() {
+        // The reference case: Dailymotion tops out at 1080p, so 2160p cannot be
+        // honoured and the gap has to be visible rather than silent.
+        let note = clamp_note(QualityPref::P2160, Some(1080));
+        assert!(note.contains("2160p"), "{note}");
+        assert!(note.contains("1080p"), "{note}");
+    }
+
+    #[test]
+    fn an_honoured_request_says_nothing() {
+        assert_eq!(clamp_note(QualityPref::P1080, Some(1080)), "");
+        // Over-delivery is not worth a remark either.
+        assert_eq!(clamp_note(QualityPref::P720, Some(1080)), "");
+    }
+
+    #[test]
+    fn relative_preferences_never_clamp() {
+        // `best`/`worst` are defined by the host's ladder, so they cannot fall short.
+        assert_eq!(clamp_note(QualityPref::Best, Some(480)), "");
+        assert_eq!(clamp_note(QualityPref::Worst, Some(288)), "");
+    }
+
+    #[test]
+    fn an_unknown_height_stays_quiet() {
+        // Some extractors omit `height`; guessing a shortfall would be worse than
+        // saying nothing.
+        assert_eq!(clamp_note(QualityPref::P2160, None), "");
     }
 }

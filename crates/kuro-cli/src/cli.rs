@@ -91,7 +91,10 @@ pub struct Cli {
     #[arg(long, short, global = true, env = "KURO_PROVIDER")]
     pub provider: Option<String>,
 
-    /// Override the configured quality (best/worst/2160p/1080p/720p/480p/360p).
+    /// Cap quality (best/worst/2160p/1080p/720p/480p/360p).
+    ///
+    /// A ceiling, not a demand: the closest rung at or below it plays, so a host
+    /// that stops at 1080p still works when you ask for more.
     #[arg(long, short, global = true, env = "KURO_QUALITY")]
     pub quality: Option<QualityPref>,
 
