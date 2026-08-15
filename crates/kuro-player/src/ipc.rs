@@ -9,9 +9,7 @@
 //! drops, resume degrades to "watched / not watched" and the playlist simply holds
 //! one episode.
 
-use std::collections::BTreeMap;
 use std::path::Path;
-use std::time::Duration;
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::net::UnixStream;
 use tracing::debug;
@@ -75,6 +73,117 @@ pub async fn append_to_playlist(socket: &Path, url: &str, title: &str) -> bool {
     ok
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::net::UnixListener;
+
+    fn socket_path(name: &str) -> std::path::PathBuf {
+        let path = std::env::temp_dir().join(format!("kuro-ipc-test-{name}.sock"));
+        std::fs::remove_file(&path).ok();
+        path
+    }
+
+    /// Stand-in for mpv's IPC socket.
+    ///
+    /// `answers` maps a property to the number mpv would return, or `None` for the
+    /// "property unavailable" reply it sends whenever no file is loaded.
+    fn spawn_server(
+        path: &Path,
+        answers: Vec<(&'static str, Option<f64>)>,
+    ) -> tokio::task::JoinHandle<()> {
+        let listener = UnixListener::bind(path).expect("bind test socket");
+        tokio::spawn(async move {
+            loop {
+                let Ok((stream, _)) = listener.accept().await else {
+                    return;
+                };
+                let mut reader = BufReader::new(stream);
+                let mut line = String::new();
+                if reader.read_line(&mut line).await.unwrap_or(0) == 0 {
+                    continue;
+                }
+                let unavailable = r#"{"error":"property unavailable"}"#.to_string();
+                let reply = answers
+                    .iter()
+                    .find(|(property, _)| line.contains(property))
+                    .and_then(|(_, value)| *value)
+                    .map(|v| format!(r#"{{"data":{v},"error":"success"}}"#))
+                    .unwrap_or(unavailable);
+                let _ = reader.get_mut().write_all(reply.as_bytes()).await;
+                let _ = reader.get_mut().write_all(b"\n").await;
+            }
+        })
+    }
+
+    #[tokio::test]
+    async fn a_missing_socket_means_playback_ended() {
+        let path = socket_path("missing");
+        assert_eq!(poll_progress(&path).await, Poll::Closed);
+    }
+
+    #[tokio::test]
+    async fn switching_episodes_does_not_look_like_a_closed_player() {
+        // The regression: between playlist entries mpv answers "property
+        // unavailable" for `time-pos`. Reporting that as `Closed` stopped the
+        // progress recorder for good, so every episode after the first skip went
+        // unrecorded.
+        let path = socket_path("between-entries");
+        let server = spawn_server(&path, vec![("time-pos", None)]);
+
+        assert_eq!(poll_progress(&path).await, Poll::Unavailable);
+
+        server.abort();
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[tokio::test]
+    async fn a_playing_file_reports_its_index_and_position() {
+        let path = socket_path("playing");
+        let server = spawn_server(
+            &path,
+            vec![
+                ("time-pos", Some(412.0)),
+                ("duration", Some(1391.0)),
+                ("playlist-pos", Some(1.0)),
+            ],
+        );
+
+        let poll = poll_progress(&path).await;
+        assert_eq!(
+            poll,
+            Poll::Progress(
+                1,
+                Progress {
+                    position_secs: 412,
+                    duration_secs: Some(1391),
+                },
+            ),
+        );
+
+        server.abort();
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[tokio::test]
+    async fn a_player_without_playlist_support_is_still_tracked() {
+        // Very old mpv builds lack `playlist-pos`; the session is then a single item.
+        let path = socket_path("no-playlist-pos");
+        let server = spawn_server(&path, vec![("time-pos", Some(30.0))]);
+
+        match poll_progress(&path).await {
+            Poll::Progress(index, progress) => {
+                assert_eq!(index, 0);
+                assert_eq!(progress.position_secs, 30);
+            }
+            other => panic!("expected progress, got {other:?}"),
+        }
+
+        server.abort();
+        std::fs::remove_file(&path).ok();
+    }
+}
+
 /// Write a single-entry M3U carrying the episode name.
 fn write_entry_playlist(url: &str, title: &str) -> Option<std::path::PathBuf> {
     // A newline in the title would forge extra playlist entries.
@@ -107,49 +216,44 @@ pub async fn set_media_title(socket: &Path, title: &str) -> bool {
     request(socket, &command).await.is_some()
 }
 
-pub async fn read_progress(socket: &Path) -> Option<(usize, Progress)> {
-    let position = get_number(socket, "time-pos").await?;
+/// Outcome of one progress poll.
+///
+/// Separating "no position right now" from "the player is gone" is the whole point.
+/// mpv reports `time-pos` as unavailable whenever no file is loaded — which includes
+/// the gap between playlist entries, i.e. every time the viewer skips to the next
+/// episode. Collapsing that into the same answer as a dead socket ends progress
+/// recording for the rest of the session, so a single episode change silently loses
+/// all later history.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Poll {
+    /// Playlist index and position.
+    Progress(usize, Progress),
+    /// The player is alive but has nothing to report yet.
+    Unavailable,
+    /// The socket is unreachable: playback is over.
+    Closed,
+}
+
+pub async fn poll_progress(socket: &Path) -> Poll {
+    // An unreachable socket is the *only* end-of-playback signal. Checking the
+    // connection on its own keeps that verdict independent of whether any given
+    // property happens to be readable at this instant.
+    if UnixStream::connect(socket).await.is_err() {
+        return Poll::Closed;
+    }
+
+    let Some(position) = get_number(socket, "time-pos").await else {
+        return Poll::Unavailable;
+    };
     let duration = get_number(socket, "duration").await;
     // Absent on very old mpv builds; treat the session as a single item then.
     let index = get_number(socket, "playlist-pos").await.unwrap_or(0.0);
 
-    Some((
+    Poll::Progress(
         index.max(0.0) as usize,
         Progress {
             position_secs: position.max(0.0) as u64,
             duration_secs: duration.filter(|d| *d > 0.0).map(|d| d as u64),
         },
-    ))
-}
-
-/// Poll until the socket stops responding, returning the last position seen for
-/// each playlist index.
-///
-/// Keyed by index rather than a single value so that skipping ahead mid-episode
-/// still records progress against the right episode.
-pub async fn track_until_exit(
-    socket: &Path,
-    interval: Duration,
-    startup_grace: Duration,
-) -> BTreeMap<usize, Progress> {
-    let started = std::time::Instant::now();
-    let mut seen: BTreeMap<usize, Progress> = BTreeMap::new();
-
-    loop {
-        tokio::time::sleep(interval).await;
-
-        match read_progress(socket).await {
-            Some((index, progress)) => {
-                seen.insert(index, progress);
-            }
-            None => {
-                // Before the grace period the player simply has not opened the
-                // socket yet; after it, an unreadable socket means playback ended.
-                if started.elapsed() > startup_grace {
-                    debug!("mpv IPC socket closed; stopping position tracking");
-                    return seen;
-                }
-            }
-        }
-    }
+    )
 }

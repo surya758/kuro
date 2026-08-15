@@ -354,14 +354,21 @@ fn spawn_progress_recorder(
         loop {
             tokio::time::sleep(Duration::from_secs(2)).await;
 
-            let Some((index, progress)) = ipc::read_progress(&socket).await else {
-                // Before the grace period the player simply has not opened the
-                // socket yet; after it, an unreadable socket means playback ended.
-                if started.elapsed() > Duration::from_secs(30) {
-                    debug!("player IPC closed; progress recorder stopping");
-                    return;
+            let (index, progress) = match ipc::poll_progress(&socket).await {
+                ipc::Poll::Progress(index, progress) => (index, progress),
+                // mpv has no position between playlist entries, which is exactly
+                // what skipping to the next episode looks like. Keep polling: the
+                // player is still there and the next episode is about to start.
+                ipc::Poll::Unavailable => continue,
+                ipc::Poll::Closed => {
+                    // Before the grace period the player simply has not opened the
+                    // socket yet; after it, playback has genuinely ended.
+                    if started.elapsed() > Duration::from_secs(30) {
+                        debug!("player IPC closed; progress recorder stopping");
+                        return;
+                    }
+                    continue;
                 }
-                continue;
             };
 
             // Avoid rewriting the file while paused.

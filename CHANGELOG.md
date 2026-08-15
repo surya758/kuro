@@ -1,5 +1,24 @@
 # Changelog
 
+## v0.4.4
+
+### Fixed
+
+- **Skipping to the next episode stopped watch history for the rest of the session.**
+  Between playlist entries mpv reports no playback position, which the progress
+  recorder read as "the player has closed" and shut itself down permanently. The
+  first episode saved; every episode reached with ⌘→ went unrecorded, along with its
+  progress. Only an unreachable socket now ends recording.
+
+### Changed
+
+- **Quality is presented as a cap rather than a promise.** A specific height has
+  always been a ceiling — the closest rung at or below it plays, so asking for more
+  than a host offers still works — but the menu advertised 2160p/1440p without
+  saying that these embed hosts effectively never serve them. The menu now reads
+  "Max quality", flags those rungs, and playback says so when the rendition came
+  back lower than requested.
+
 ## v0.4.3
 
 ### Changed — breaking
