@@ -14,7 +14,7 @@
 //!   /anime/{slug}                              RSC → primaryTabs[].seasons[].episodes[]
 //!   /api/anime-sources-versions                bySeason[slug][tab][season] → token
 //!   /api/anime/{slug}/episode/{id}/sources?v=… → privateId
-//!   geo.dailymotion.com/player.html?video=…    → yt-dlp
+//!   dailymotion.com/video/{privateId}          → resolved by the player
 
 use crate::rsc;
 use async_trait::async_trait;
@@ -171,12 +171,18 @@ fn latest_populated_season(tabs: &[Value]) -> Option<(String, String, Vec<Value>
     best
 }
 
-/// Player URL for a source entry, mirroring the site's own platform switch.
+/// Player URL for a source entry.
+///
+/// The canonical page rather than the site's own `geo.dailymotion.com/player.html`
+/// embed. Both resolve for the extractor, but these sources publish no muxed
+/// rendition, so the player has to re-resolve the URL itself — and its extractor
+/// hook only recognises the canonical form. Handing over the embed leaves it
+/// fetching the page and finding an image.
 fn embed_for(platform: &str, video: &str) -> Option<Url> {
     let raw = match platform {
-        "dailymotion" => format!("https://geo.dailymotion.com/player.html?video={video}"),
+        "dailymotion" => format!("https://www.dailymotion.com/video/{video}"),
         "rumble" => format!("https://rumble.com/embed/{video}/"),
-        "youtube" => format!("https://www.youtube.com/embed/{video}"),
+        "youtube" => format!("https://www.youtube.com/watch?v={video}"),
         _ => return None,
     };
     Url::parse(&raw).ok()
@@ -441,7 +447,7 @@ mod tests {
     fn embeds_are_built_per_platform() {
         assert_eq!(
             embed_for("dailymotion", "kAbC").unwrap().as_str(),
-            "https://geo.dailymotion.com/player.html?video=kAbC"
+            "https://www.dailymotion.com/video/kAbC"
         );
         assert!(embed_for("rumble", "v1x").is_some());
         assert!(embed_for("vimeo", "123").is_none());
