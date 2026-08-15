@@ -120,7 +120,7 @@ fn print_series_list(series: &[Series]) {
             i + 1,
             s.title,
             year,
-            crate::ui::dim(format!("[{}]", s.provider_id))
+            crate::ui::dim_stdout(format!("[{}]", s.provider_id))
         );
     }
 }
@@ -579,7 +579,7 @@ pub fn list(app: &App, limit: usize, clear: bool) -> Result<()> {
             entry.series_title,
             entry.episode,
             progress,
-            crate::ui::dim(entry.watched_at.format("%Y-%m-%d %H:%M").to_string())
+            crate::ui::dim_stdout(entry.watched_at.format("%Y-%m-%d %H:%M").to_string())
         );
     }
     Ok(())

@@ -49,8 +49,11 @@ impl Spinner {
                     // \r + clear-to-end keeps the line from smearing as the
                     // elapsed counter changes width.
                     eprint!(
-                        "\r\x1b[2K\x1b[2m{}\x1b[0m {message} \x1b[2m{elapsed:.1}s\x1b[0m",
-                        FRAMES[frame % FRAMES.len()]
+                        "\r\x1b[2K{accent}{}{reset} {message} {dim}{elapsed:.1}s{reset}",
+                        FRAMES[frame % FRAMES.len()],
+                        accent = crate::ui::style::raw::ACCENT,
+                        dim = crate::ui::style::raw::DIM,
+                        reset = crate::ui::style::raw::RESET,
                     );
                     let _ = std::io::stderr().flush();
                     frame += 1;

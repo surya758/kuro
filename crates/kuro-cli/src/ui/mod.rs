@@ -6,6 +6,7 @@
 pub mod progress;
 pub mod select;
 pub mod spinner;
+pub mod style;
 
 use std::io::IsTerminal;
 
@@ -25,11 +26,12 @@ pub fn stdout_is_tty() -> bool {
     std::io::stdout().is_terminal()
 }
 
-/// Dim text, or the bare string when stdout is redirected.
+/// Dim text for **stdout**, or the bare string when stdout is redirected.
 ///
 /// Escape codes in piped output corrupt anything downstream that greps or parses
-/// it, so colour is opt-in on being a terminal.
-pub fn dim(text: impl AsRef<str>) -> String {
+/// it, so colour is opt-in on being a terminal. Interactive output goes to stderr
+/// and uses [`style`] instead.
+pub fn dim_stdout(text: impl AsRef<str>) -> String {
     if stdout_is_tty() {
         format!("\x1b[2m{}\x1b[0m", text.as_ref())
     } else {

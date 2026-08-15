@@ -173,7 +173,7 @@ fn render(rows: &Arc<Mutex<Vec<Row>>>, count: usize) {
 fn format_row(row: &Row) -> String {
     let (mark, colour) = match row.state {
         State::Waiting => ("·", "\x1b[2m"),
-        State::Running => ("↓", "\x1b[36m"),
+        State::Running => ("↓", super::style::raw::ACCENT),
         State::Done => ("✓", "\x1b[32m"),
         State::Failed => ("✗", "\x1b[31m"),
     };
@@ -213,9 +213,11 @@ fn format_row(row: &Row) -> String {
 fn bar(fraction: f64) -> String {
     let filled = (fraction.clamp(0.0, 1.0) * BAR_WIDTH as f64).round() as usize;
     format!(
-        "\x1b[36m{}\x1b[0m\x1b[2m{}\x1b[0m",
+        "{accent}{}{reset}\x1b[2m{}\x1b[0m",
         "█".repeat(filled),
-        "░".repeat(BAR_WIDTH - filled)
+        "░".repeat(BAR_WIDTH - filled),
+        accent = super::style::raw::ACCENT,
+        reset = super::style::raw::RESET,
     )
 }
 

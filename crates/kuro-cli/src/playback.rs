@@ -453,9 +453,9 @@ async fn launch(
     }
 
     eprintln!(
-        "▶  {title}  [{} · {}]",
-        mirror.label,
-        stream.quality_label()
+        "{}  {title}  {}",
+        crate::ui::style::accent("▶"),
+        crate::ui::style::dim(format!("[{} · {}]", mirror.label, stream.quality_label())),
     );
 
     // The ⏪/⏩ buttons on IINA's on-screen controls are seek/speed, not playlist

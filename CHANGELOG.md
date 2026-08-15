@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.4.1
+
+### Changed
+
+- **Activity and interaction now share one accent colour.** Spinners, the selected
+  row and its marker, download progress bars, and the playback marker were mostly
+  dim, so the parts of the output you act on blended into the parts you only read.
+  They use a distinct accent instead, leaving green/red/yellow to mean
+  success/failure/warning. `NO_COLOR=1` disables colour entirely.
+
+### Documentation
+
+- Build-from-source instructions are a visible section rather than a collapsed
+  block, and cover the `cargo run` / `cargo build --release` workflow.
+
 ## v0.4.0
 
 ### Changed — breaking

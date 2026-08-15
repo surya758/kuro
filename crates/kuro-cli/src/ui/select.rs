@@ -144,7 +144,7 @@ fn draw(
         let number = i + 1;
 
         let label = if selected {
-            format!("\x1b[36;1m{}\x1b[0m", item.label)
+            super::style::accent_bold(&item.label)
         } else {
             item.label.clone()
         };
@@ -155,6 +155,11 @@ fn draw(
             .map(|h| format!("  \x1b[2m{h}\x1b[0m"))
             .unwrap_or_default();
 
+        let marker = if selected {
+            super::style::accent(marker)
+        } else {
+            marker.to_string()
+        };
         write!(
             err,
             "\r\x1b[2K{marker} \x1b[2m{number:>2}.\x1b[0m {label}{hint}\r\n"

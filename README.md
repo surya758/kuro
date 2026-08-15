@@ -50,6 +50,8 @@ Everything is scriptable too — piping or `--json` skips the menus entirely.
 ## Contents
 
 - [Install](#install)
+  - [Homebrew](#homebrew)
+  - [From source](#from-source)
 - [Usage](#usage)
   - [Command map](#command-map)
 - [Providers](#providers)
@@ -62,6 +64,8 @@ Everything is scriptable too — piping or `--json` skips the menus entirely.
 
 ## Install
 
+### Homebrew
+
 ```sh
 brew tap surya758/tap
 brew trust surya758/tap     # Homebrew 6+ requires this for third-party taps
@@ -73,21 +77,24 @@ kuro doctor                 # verify everything is wired up
 
 `yt-dlp` comes in as a dependency. Homebrew also installs shell completions.
 
-<details>
-<summary>Building from source instead</summary>
+### From source
+
+Needs [Rust](https://rustup.rs) 1.75+ and macOS.
 
 ```sh
-brew install --cask iina
-brew install yt-dlp
+brew install --cask iina                  # the player
+brew install yt-dlp                       # stream resolution and downloads
 
-git clone https://github.com/surya758/kuro && cd kuro
+git clone https://github.com/surya758/kuro
+cd kuro
 cargo install --path crates/kuro-cli      # installs `kuro` to ~/.cargo/bin
+
 kuro completions zsh > ~/.zfunc/_kuro     # bash, fish, elvish, powershell too
+kuro doctor                               # verify everything is wired up
 ```
 
-Needs Rust 1.75+.
-
-</details>
+To hack on it without installing, `cargo run -- search "<query>"` works from the
+repo, and `cargo build --release` leaves a binary at `target/release/kuro`.
 
 <details>
 <summary>Uninstalling</summary>
@@ -156,6 +163,10 @@ launch nothing), `--no-cache`, `-v`/`-vv` for logs.
 
 Scraped pages are cached on disk, so a repeated search is near-instant. `kuro cache
 status` shows where and how much; `kuro cache clear` empties it.
+
+Spinners, the selected row, progress bars and the playback marker share one accent
+colour so activity stands apart from green/red status. Set `NO_COLOR=1` to turn all
+of it off.
 
 ### Command map
 
@@ -264,7 +275,7 @@ Page JavaScript is never executed, which sidesteps the anti-bot layer entirely.
 ## Development
 
 ```sh
-cargo test                # 99 tests, all offline
+cargo test                # 101 tests, all offline
 cargo run -- search foo
 ```
 
