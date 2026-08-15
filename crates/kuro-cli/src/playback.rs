@@ -373,6 +373,7 @@ fn spawn_progress_recorder(
         let mut current_index: Option<usize> = None;
         let mut seen_player = false;
         let mut idle_polls = 0u8;
+        let mut start_cleared = false;
 
         loop {
             tokio::time::sleep(Duration::from_secs(2)).await;
@@ -381,6 +382,13 @@ fn spawn_progress_recorder(
                 ipc::Poll::Progress(index, progress) => {
                     seen_player = true;
                     idle_polls = 0;
+                    // The launch-time `--start` has done its job by the time the
+                    // player reports a position, and mpv would otherwise re-apply
+                    // it to every episode the lookahead queues.
+                    if !start_cleared {
+                        ipc::clear_start(&socket).await;
+                        start_cleared = true;
+                    }
                     (index, progress)
                 }
                 // mpv has no position between playlist entries, which is exactly

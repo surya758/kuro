@@ -1,5 +1,16 @@
 # Changelog
 
+## v0.5.1
+
+### Fixed
+
+- **Queued episodes opened part-way through.** `--start` is a global mpv option, so
+  the resume point of the episode kuro launched was re-applied to every episode the
+  lookahead queued — skipping ahead with ⌘→ dropped you into an unwatched episode at
+  the previous one's timestamp. It is now cleared once the first seek has landed, so
+  resume still works and stops there. Affected every provider; it only showed up when
+  the launched episode had a resume point, which is why it came and went.
+
 ## v0.5.0
 
 ### Added

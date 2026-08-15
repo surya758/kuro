@@ -149,6 +149,64 @@ mod tests {
         })
     }
 
+    /// Replies success only when the request matches, so the assertion proves what
+    /// was sent rather than merely that something was.
+    fn spawn_expecting(
+        path: &Path,
+        must_contain: Vec<&'static str>,
+    ) -> tokio::task::JoinHandle<()> {
+        let listener = UnixListener::bind(path).expect("bind test socket");
+        tokio::spawn(async move {
+            loop {
+                let Ok((stream, _)) = listener.accept().await else {
+                    return;
+                };
+                let mut reader = BufReader::new(stream);
+                let mut line = String::new();
+                if reader.read_line(&mut line).await.unwrap_or(0) == 0 {
+                    continue;
+                }
+                if !must_contain.iter().all(|needle| line.contains(needle)) {
+                    // Hang up rather than reply: any JSON carrying an `error` field
+                    // — including a rejection — reads as a valid answer, which
+                    // would make the assertion below unfalsifiable.
+                    continue;
+                }
+                let _ = reader
+                    .get_mut()
+                    .write_all(br#"{"data":null,"error":"success"}"#)
+                    .await;
+                let _ = reader.get_mut().write_all(b"\n").await;
+            }
+        })
+    }
+
+    #[tokio::test]
+    async fn clearing_start_sets_the_property_to_none() {
+        // Guards the regression where the launched episode's resume point leaked
+        // onto every queued episode, opening unwatched ones part-way through.
+        let path = socket_path("clear-start");
+        let server = spawn_expecting(&path, vec!["set_property", "start", "none"]);
+
+        assert!(clear_start(&path).await);
+
+        server.abort();
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[tokio::test]
+    async fn the_command_assertion_can_actually_fail() {
+        // Proves the stand-in above rejects a mismatch, so the test that uses it
+        // is measuring the command rather than passing unconditionally.
+        let path = socket_path("clear-start-negative");
+        let server = spawn_expecting(&path, vec!["set_property", "some-other-property"]);
+
+        assert!(!clear_start(&path).await);
+
+        server.abort();
+        std::fs::remove_file(&path).ok();
+    }
+
     #[tokio::test]
     async fn a_missing_socket_means_playback_ended() {
         let path = socket_path("missing");
@@ -274,6 +332,20 @@ fn write_entry_playlist(url: &str, title: &str) -> Option<std::path::PathBuf> {
 ///
 /// `--force-media-title` is a global option, so the title passed at launch would
 /// otherwise stay pinned to the first episode for every later playlist entry.
+/// Stop a launch-time `--start` from reaching later playlist entries.
+///
+/// `--start` is global: mpv re-applies it as each file loads, so the resume point of
+/// the episode kuro launched would seek every queued episode to that same offset —
+/// an unwatched episode opening part-way through. Clearing it once the first seek
+/// has landed keeps resume working without leaking it forward.
+pub async fn clear_start(socket: &Path) -> bool {
+    let command = serde_json::json!({
+        "command": ["set_property", "start", "none"]
+    })
+    .to_string();
+    request(socket, &command).await.is_some()
+}
+
 pub async fn set_media_title(socket: &Path, title: &str) -> bool {
     let command = serde_json::json!({
         "command": ["set_property", "force-media-title", title]
