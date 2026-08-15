@@ -49,9 +49,6 @@ struct YtDlpFormat {
     acodec: Option<String>,
     #[serde(default)]
     http_headers: Option<HashMap<String, String>>,
-    /// The master playlist a rendition came from, when the extractor reports one.
-    #[serde(default)]
-    manifest_url: Option<String>,
 }
 
 impl YtDlpFormat {
@@ -246,6 +243,23 @@ impl YtDlpResolver {
     }
 }
 
+/// The highest-bitrate audio-only rendition, used when nothing is pre-muxed.
+///
+/// Audio is a small share of the total, so the best track costs little even beside
+/// a capped video rendition — and picking the worst would undercut the reason these
+/// hosts are worth using.
+fn best_audio(formats: &[YtDlpFormat]) -> Option<&YtDlpFormat> {
+    formats
+        .iter()
+        .filter(|f| f.has_audio() && !f.has_video() && f.url.is_some())
+        .max_by(|a, b| {
+            a.tbr
+                .unwrap_or(0.0)
+                .partial_cmp(&b.tbr.unwrap_or(0.0))
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+}
+
 /// A yt-dlp format expression for the requested quality.
 ///
 /// Each falls back to a pre-muxed stream (`/b`) because many of these hosts serve
@@ -317,6 +331,7 @@ impl StreamResolver for YtDlpResolver {
                 height: f.height,
                 bitrate_kbps: f.tbr.map(|t| t as u32),
                 headers: f.http_headers.clone().unwrap_or_default(),
+                audio_url: None,
             })
         };
 
@@ -329,45 +344,38 @@ impl StreamResolver for YtDlpResolver {
             .filter_map(to_stream)
             .collect();
 
-        // With nothing pre-muxed, hand over the master playlist instead of a single
-        // rendition: it lists the video and audio tracks together, and the player
-        // pairs them itself. A lone video rendition would play silent. Hosts that
-        // serve high-bitrate video — 4K60 among them — split the tracks this way,
-        // so this is the normal path there rather than an edge case.
+        // Nothing pre-muxed: pair each video rendition with the best audio track and
+        // let the player mux them. Hosts serving high-bitrate video — 4K60 among
+        // them — publish the tracks separately, so this is their normal shape.
+        //
+        // Handing over the master playlist instead would look simpler, but it plays
+        // silent when the player fails to pair the tracks, and surrenders the
+        // requested quality to the player when it succeeds.
         if streams.is_empty() {
-            if let Some(master) = output
-                .formats
-                .iter()
-                .find_map(|f| f.manifest_url.as_deref())
-                .and_then(|m| Url::parse(m).ok())
-            {
-                debug!(%url, "no muxed format; using the master playlist");
-                let headers = output
-                    .formats
-                    .iter()
-                    .find_map(|f| f.http_headers.clone())
-                    .unwrap_or_default();
-                streams.push(Stream {
-                    url: master,
-                    kind: StreamKind::Hls,
-                    // Left unset deliberately: the master spans every rendition, so
-                    // claiming one height would misreport what is about to play.
-                    height: None,
-                    bitrate_kbps: None,
-                    headers,
-                });
-            }
-        }
+            let audio = best_audio(&output.formats).and_then(|f| {
+                let url = Url::parse(f.url.as_ref()?).ok()?;
+                Some(url)
+            });
 
-        if streams.is_empty() {
             streams = output
                 .formats
                 .iter()
                 .filter(|f| f.has_video())
                 .filter_map(to_stream)
+                .map(|mut s| {
+                    s.audio_url = audio.clone();
+                    s
+                })
                 .collect();
-            if !streams.is_empty() {
-                warn!(%url, "no muxed format available; using video-only rendition");
+
+            match (streams.is_empty(), audio.is_some()) {
+                (false, true) => {
+                    debug!(%url, "no muxed format; pairing video with a separate audio track")
+                }
+                (false, false) => {
+                    warn!(%url, "no muxed format and no audio track; playback will be silent")
+                }
+                _ => {}
             }
         }
 
@@ -380,6 +388,7 @@ impl StreamResolver for YtDlpResolver {
                     height: None,
                     bitrate_kbps: None,
                     headers: HashMap::new(),
+                    audio_url: None,
                 });
             }
         }
@@ -405,6 +414,7 @@ mod tests {
             height: Some(height),
             bitrate_kbps: None,
             headers: HashMap::new(),
+            audio_url: None,
         }
     }
 
@@ -487,7 +497,6 @@ mod tests {
             vcodec: Some("avc1".into()),
             acodec: Some("none".into()),
             http_headers: None,
-            manifest_url: None,
         };
         assert!(f.has_video());
         assert!(!f.has_audio());
@@ -506,7 +515,6 @@ mod tests {
             vcodec: None,
             acodec: None,
             http_headers: None,
-            manifest_url: None,
         };
         assert!(f.has_video());
         assert!(f.has_audio());

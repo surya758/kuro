@@ -73,6 +73,12 @@ impl IinaPlayer {
             args.push(format!("--mpv-http-header-fields-append={name}: {value}"));
         }
 
+        // Video and audio arrive as separate renditions on hosts that publish no
+        // muxed format; without this the picture plays in silence.
+        if let Some(audio) = &stream.audio_url {
+            args.push(format!("--mpv-audio-file={audio}"));
+        }
+
         if let Some(start) = opts.start_secs.filter(|s| *s > 0) {
             args.push(format!("--mpv-start={start}"));
         }
@@ -184,6 +190,7 @@ mod tests {
             height: Some(1080),
             bitrate_kbps: None,
             headers,
+            audio_url: None,
         }
     }
 

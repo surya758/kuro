@@ -186,6 +186,14 @@ pub struct Stream {
     /// Headers the CDN requires. Rumble and Dailymotion both key on `Referer`;
     /// these are forwarded to the player rather than being used here.
     pub headers: HashMap<String, String>,
+    /// Separate audio track, when [`Stream::url`] carries video alone.
+    ///
+    /// High-bitrate hosts publish video and audio as independent renditions with
+    /// nothing pre-muxed. Naming the audio explicitly beats handing over the master
+    /// playlist and hoping the player pairs them — it plays silent when it does not,
+    /// and leaves the requested quality up to the player when it does.
+    #[serde(default)]
+    pub audio_url: Option<Url>,
 }
 
 impl Stream {
