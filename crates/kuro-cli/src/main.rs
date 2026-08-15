@@ -87,7 +87,7 @@ async fn run(cli: Cli) -> Result<()> {
         }) => commands::download(&mut app, query, *ep, *all, mirror.clone(), out, *jobs).await,
         Some(Command::Next) => commands::next(&mut app).await,
         Some(Command::Continue) => commands::continue_watching(&mut app).await,
-        Some(Command::List { limit, clear }) => commands::list(&app, *limit, *clear),
+        Some(Command::History { limit, clear }) => commands::history(&app, *limit, *clear),
         Some(Command::Bookmark { action }) => commands::bookmark(&mut app, action).await,
         Some(Command::Provider { action }) => commands::provider_cmd(&mut app, action).await,
         Some(Command::Config { action }) => commands::config_cmd(&app, action),

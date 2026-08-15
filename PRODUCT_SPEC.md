@@ -469,7 +469,7 @@ kuro play   <series> --ep 15 --mirror dailymotion --quality 720p
 kuro next                             # play next unwatched episode of last series
 kuro continue                         # resume last episode at last position
 
-kuro list                             # watch history
+kuro history                          # watch history
 kuro bookmark add|rm|list <series>
 kuro provider list|enable|disable|only|test|reload
 kuro config edit|path|show

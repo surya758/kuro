@@ -60,7 +60,7 @@ impl History {
 
     /// Record progress, replacing any existing entry for the same episode.
     ///
-    /// The list is kept sorted most-recent-first so `kuro continue` and `kuro list`
+    /// The list is kept sorted most-recent-first so `kuro continue` and `kuro history`
     /// can just read from the front.
     #[allow(clippy::too_many_arguments)]
     pub fn record(

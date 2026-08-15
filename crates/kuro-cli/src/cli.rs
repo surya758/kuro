@@ -179,8 +179,7 @@ pub enum Command {
     Continue,
 
     /// Show watch history.
-    #[command(alias = "history")]
-    List {
+    History {
         /// Maximum entries to show.
         #[arg(long, default_value_t = 20)]
         limit: usize,

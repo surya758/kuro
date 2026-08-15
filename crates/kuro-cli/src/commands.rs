@@ -544,7 +544,7 @@ fn format_hms(secs: u64) -> String {
     }
 }
 
-pub fn list(app: &App, limit: usize, clear: bool) -> Result<()> {
+pub fn history(app: &App, limit: usize, clear: bool) -> Result<()> {
     let mut history = History::load(&app.paths).context("loading watch history")?;
 
     if clear {

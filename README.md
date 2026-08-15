@@ -113,7 +113,7 @@ rm -rf ~/Library/Application\ Support/kuro   # config, history, bookmarks, healt
 rm -rf ~/Library/Caches/kuro                 # cached pages
 ```
 
-`kuro cache clear` empties just the cache and `kuro list --clear` just the watch
+`kuro cache clear` empties just the cache and `kuro history --clear` just the watch
 history, if you would rather keep the rest.
 
 </details>
@@ -138,8 +138,7 @@ kuro play   "<query>" --ep 1-5             # queue a range, played in order
 kuro play   "<query>" --ep 15 --quality 720p --mirror dailymotion
 kuro next                                  # next unwatched episode
 kuro continue                              # resume where you stopped
-kuro list                                  # watch history (--clear to erase)
-kuro history                               # same thing
+kuro history                               # watch history (--clear to erase)
 kuro bookmark add "<query>"                # follow a series
 kuro bookmark list                         # what you are following
 
@@ -176,7 +175,7 @@ kuro search "<query>"       search · pick series · pick episode · play/downlo
 kuro play "<q>" --ep 15     direct, no prompts
 kuro download "<q>" --all   direct, no prompts
 kuro next | continue        resume from watch history
-kuro list | bookmark        history and follows
+kuro history | bookmark     history and follows
 kuro provider | config | cache | doctor
 ```
 

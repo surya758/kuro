@@ -1,5 +1,13 @@
 # Changelog
 
+## v0.4.3
+
+### Changed — breaking
+
+- **`kuro list` is gone; use `kuro history`.** They were the same command under two
+  names, which is one name too many. `kuro bookmark list` and `kuro provider list`
+  are unaffected — those belong to their own subcommand groups.
+
 ## v0.4.2
 
 ### Fixed
