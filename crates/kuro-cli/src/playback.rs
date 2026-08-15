@@ -488,6 +488,22 @@ fn spawn_progress_recorder(
 /// so asking for 2160p on a host whose ladder stops at 1080p plays rather than
 /// fails. That is the right behaviour, but silently handing back something lower
 /// reads as a bug — most of these embed hosts never exceed 1080p. Say so once here.
+/// How to describe the quality about to play.
+///
+/// A source the player resolves has no height until it does so, and reporting
+/// "unknown" reads like a failure rather than a deferral — the cap that was asked
+/// for is the honest answer at this point.
+fn quality_summary(stream: &Stream, requested: QualityPref) -> String {
+    match (stream.height, stream.ytdl_format.is_some()) {
+        (Some(h), _) => format!("{h}p{}", clamp_note(requested, Some(h))),
+        (None, true) => match requested.target_height() {
+            Some(cap) => format!("up to {cap}p"),
+            None => "best available".to_string(),
+        },
+        (None, false) => "unknown".to_string(),
+    }
+}
+
 fn clamp_note(requested: QualityPref, actual: Option<u32>) -> String {
     match (requested.target_height(), actual) {
         (Some(target), Some(actual)) if actual < target => {
@@ -548,17 +564,21 @@ async fn launch(
         "{}  {title}  {}",
         crate::ui::style::accent("▶"),
         crate::ui::style::dim(format!(
-            "[{} · {}{}]",
+            "[{} · {}]",
             mirror.label,
-            stream.quality_label(),
-            clamp_note(requested, stream.height),
+            quality_summary(stream, requested),
         )),
     );
 
-    // The ⏪/⏩ buttons on IINA's on-screen controls are seek/speed, not playlist
-    // navigation — worth saying, because reaching for them is the obvious move.
+    // The on-screen seek buttons are seek/speed, not playlist navigation — worth
+    // saying, because reaching for them is the obvious move. The keys differ by
+    // player, and naming the wrong ones is worse than naming none.
     if !upcoming.is_empty() {
-        eprintln!("   \x1b[2m⌘→ / ⌘← in IINA switch episode · ⇧⌘P for the playlist\x1b[0m");
+        let keys = match player.name() {
+            "mpv" => "< / > in mpv switch episode",
+            _ => "⌘→ / ⌘← in IINA switch episode · ⇧⌘P for the playlist",
+        };
+        eprintln!("   \x1b[2m{keys}\x1b[0m");
     }
     eprintln!("   \x1b[2mkuro stays open to save your progress\x1b[0m");
 
@@ -674,6 +694,37 @@ mod tests {
     fn empty_preference_preserves_page_order() {
         let ordered = order_by_preference(vec![mirror("Rumble"), mirror("Dailymotion")], &[]);
         assert_eq!(labels(&ordered), vec!["Rumble", "Dailymotion"]);
+    }
+
+    fn delegated(height: Option<u32>) -> Stream {
+        Stream {
+            url: Url::parse("https://example.test/v").expect("url"),
+            kind: kuro_core::StreamKind::Hls,
+            height,
+            bitrate_kbps: None,
+            headers: std::collections::HashMap::new(),
+            ytdl_format: Some("bv*+ba/b".to_string()),
+        }
+    }
+
+    #[test]
+    fn a_deferred_source_reports_its_cap_not_unknown() {
+        // The player has not resolved it yet; "unknown" reads as a failure.
+        let s = delegated(None);
+        assert_eq!(quality_summary(&s, QualityPref::P2160), "up to 2160p");
+    }
+
+    #[test]
+    fn a_deferred_source_with_no_cap_says_best() {
+        let s = delegated(None);
+        assert_eq!(quality_summary(&s, QualityPref::Best), "best available");
+    }
+
+    #[test]
+    fn a_resolved_source_reports_its_real_height() {
+        let mut s = delegated(Some(1072));
+        s.ytdl_format = None;
+        assert!(quality_summary(&s, QualityPref::P1080).starts_with("1072p"));
     }
 
     #[test]

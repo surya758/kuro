@@ -49,6 +49,12 @@ impl MpvPlayer {
     fn args(&self, stream: &Stream, opts: &PlaybackOpts) -> Vec<String> {
         let mut args = Vec::new();
 
+        // Software decoding cannot keep up with 4K60 AV1, which stutters without
+        // this even though the same stream is smooth in a browser. `auto-safe`
+        // engages VideoToolbox where the pairing is known-good and falls back
+        // quietly where it is not.
+        args.push("--hwdec=auto-safe".to_string());
+
         if let Some(title) = &opts.title {
             args.push(format!("--force-media-title={title}"));
         }
@@ -177,6 +183,13 @@ mod tests {
         assert!(args.iter().all(|a| !a.starts_with("--mpv-")), "{args:?}");
         assert!(args.contains(&"--force-media-title=Ep 1".to_string()));
         assert!(args.contains(&"--start=30".to_string()));
+    }
+
+    #[test]
+    fn hardware_decoding_is_requested() {
+        // 4K60 AV1 stutters on the CPU; this is what keeps it smooth.
+        let args = player().args(&stream(), &PlaybackOpts::default());
+        assert!(args.contains(&"--hwdec=auto-safe".to_string()), "{args:?}");
     }
 
     #[test]
