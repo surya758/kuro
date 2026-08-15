@@ -155,6 +155,12 @@ fn default_meta_attr() -> String {
 pub struct RequestSpec {
     pub user_agent: Option<String>,
     pub referer: Option<String>,
+    /// Fetch this provider through the external browser-shaped client.
+    ///
+    /// Only for sites whose challenge inspects the TLS handshake, where no header
+    /// combination gets through. It costs a process per request, so it stays off
+    /// unless a provider actually needs it.
+    pub impersonate: bool,
 }
 
 impl ProviderSpec {

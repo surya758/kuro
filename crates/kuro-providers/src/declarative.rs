@@ -9,7 +9,8 @@ use crate::spec::ProviderSpec;
 use async_trait::async_trait;
 use kuro_core::cache::ttl;
 use kuro_core::{
-    Episode, FetchCtx, Mirror, Provider, ProviderError, ProviderId, Series, SeriesDetails,
+    Episode, FetchCtx, FetchOpts, Mirror, Provider, ProviderError, ProviderId, Series,
+    SeriesDetails,
 };
 use std::time::Duration;
 use tracing::debug;
@@ -48,10 +49,17 @@ impl DeclarativeProvider {
         self.spec.request.user_agent.as_deref()
     }
 
+    fn opts(&self) -> FetchOpts<'_> {
+        FetchOpts {
+            referer: self.referer(),
+            user_agent: self.user_agent(),
+            impersonate: self.spec.request.impersonate,
+        }
+    }
+
     /// Uncached fetch, for liveness probes that must reflect the site right now.
     async fn get(&self, ctx: &FetchCtx, url: &Url) -> Result<String, ProviderError> {
-        ctx.get_text_with_ua(url, self.referer(), self.user_agent())
-            .await
+        ctx.get_with(url, self.opts()).await
     }
 
     async fn get_cached(
@@ -60,8 +68,7 @@ impl DeclarativeProvider {
         url: &Url,
         ttl: Duration,
     ) -> Result<String, ProviderError> {
-        ctx.get_cached(url, self.referer(), self.user_agent(), ttl)
-            .await
+        ctx.get_cached_with(url, self.opts(), ttl).await
     }
 
     fn search_url(&self, query: &str) -> Result<Url, ProviderError> {

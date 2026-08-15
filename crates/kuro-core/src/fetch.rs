@@ -6,6 +6,7 @@
 
 use crate::cache::HttpCache;
 use crate::error::ProviderError;
+use crate::external::ExternalFetcher;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
@@ -26,6 +27,21 @@ pub struct FetchConfig {
     pub retry_backoff: Duration,
     /// Where to cache responses. `None` disables caching.
     pub cache_dir: Option<PathBuf>,
+    /// Binary used for providers that ask to be fetched through a browser-shaped
+    /// client. `None` leaves those providers unusable rather than failing others.
+    pub impersonate_command: Option<String>,
+}
+
+/// Per-request knobs a provider can set.
+///
+/// A struct rather than more parameters: these travel together through several
+/// layers, and three of the four call sites need to override only one of them.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct FetchOpts<'a> {
+    pub referer: Option<&'a str>,
+    pub user_agent: Option<&'a str>,
+    /// Route through the external client instead of the built-in one.
+    pub impersonate: bool,
 }
 
 impl Default for FetchConfig {
@@ -36,6 +52,9 @@ impl Default for FetchConfig {
             per_host_concurrency: 4,
             retry_backoff: Duration::from_millis(400),
             cache_dir: None,
+            // Present by default so an installed binary just works; when it is
+            // absent the error names it, which is more use than silence.
+            impersonate_command: Some(crate::external::DEFAULT_IMPERSONATE_COMMAND.to_string()),
         }
     }
 }
@@ -46,6 +65,7 @@ pub struct FetchCtx {
     config: FetchConfig,
     permits: Arc<Semaphore>,
     cache: HttpCache,
+    impersonator: Option<Arc<ExternalFetcher>>,
 }
 
 impl FetchCtx {
@@ -61,13 +81,23 @@ impl FetchCtx {
 
         let permits = Arc::new(Semaphore::new(config.per_host_concurrency));
         let cache = HttpCache::new(config.cache_dir.clone());
+        let impersonator = config
+            .impersonate_command
+            .as_ref()
+            .map(|c| Arc::new(ExternalFetcher::new(c.clone())));
 
         Ok(Self {
             client,
             config,
             permits,
             cache,
+            impersonator,
         })
+    }
+
+    /// The configured external client, if any.
+    pub fn impersonator(&self) -> Option<&ExternalFetcher> {
+        self.impersonator.as_deref()
     }
 
     pub fn config(&self) -> &FetchConfig {
@@ -89,13 +119,32 @@ impl FetchCtx {
         user_agent: Option<&str>,
         ttl: Duration,
     ) -> Result<String, ProviderError> {
+        self.get_cached_with(
+            url,
+            FetchOpts {
+                referer,
+                user_agent,
+                impersonate: false,
+            },
+            ttl,
+        )
+        .await
+    }
+
+    /// As [`FetchCtx::get_cached`], honouring the full [`FetchOpts`].
+    pub async fn get_cached_with(
+        &self,
+        url: &Url,
+        opts: FetchOpts<'_>,
+        ttl: Duration,
+    ) -> Result<String, ProviderError> {
         let key = url.as_str();
 
         if let Some(body) = self.cache.get(key) {
             return Ok(body);
         }
 
-        let body = self.get_text_with_ua(url, referer, user_agent).await?;
+        let body = self.get_with(url, opts).await?;
         self.cache.put(key, &body, ttl);
         Ok(body)
     }
@@ -116,6 +165,22 @@ impl FetchCtx {
         referer: Option<&str>,
         user_agent: Option<&str>,
     ) -> Result<String, ProviderError> {
+        self.get_with(
+            url,
+            FetchOpts {
+                referer,
+                user_agent,
+                impersonate: false,
+            },
+        )
+        .await
+    }
+
+    /// GET with retry, using whichever client [`FetchOpts`] selects.
+    ///
+    /// Retries, backoff and the per-host permit apply identically to both clients,
+    /// so a provider that needs the external one is no less polite than the rest.
+    pub async fn get_with(&self, url: &Url, opts: FetchOpts<'_>) -> Result<String, ProviderError> {
         let _permit = self
             .permits
             .acquire()
@@ -129,18 +194,32 @@ impl FetchCtx {
             attempt += 1;
             debug!(%url, attempt, "fetching");
 
-            let mut req = self.client.get(url.clone());
-            if let Some(r) = referer {
-                req = req.header(reqwest::header::REFERER, r);
-            }
-            if let Some(ua) = user_agent {
-                req = req.header(reqwest::header::USER_AGENT, ua);
-            }
+            let outcome = if opts.impersonate {
+                match self.impersonator.as_ref() {
+                    Some(fetcher) => {
+                        fetcher
+                            .get(url, opts.referer, opts.user_agent, self.config.timeout)
+                            .await
+                    }
+                    None => Err(ProviderError::Config(
+                        "this provider needs an external fetcher, but none is configured"
+                            .to_string(),
+                    )),
+                }
+            } else {
+                let mut req = self.client.get(url.clone());
+                if let Some(r) = opts.referer {
+                    req = req.header(reqwest::header::REFERER, r);
+                }
+                if let Some(ua) = opts.user_agent {
+                    req = req.header(reqwest::header::USER_AGENT, ua);
+                }
 
-            let outcome = match req.send().await {
-                Ok(resp) => Self::classify(resp).await,
-                Err(e) if e.is_timeout() => Err(ProviderError::Timeout),
-                Err(e) => Err(ProviderError::Network(e)),
+                match req.send().await {
+                    Ok(resp) => Self::classify(resp).await,
+                    Err(e) if e.is_timeout() => Err(ProviderError::Timeout),
+                    Err(e) => Err(ProviderError::Network(e)),
+                }
             };
 
             match outcome {

@@ -36,6 +36,12 @@ pub enum ProviderError {
 
     #[error("provider panicked while scraping (this is a bug in the scraper)")]
     Panic,
+
+    #[error("`{command}` is required by this provider but is not installed")]
+    FetcherMissing { command: String },
+
+    #[error("external fetcher failed: {0}")]
+    Fetcher(String),
 }
 
 impl ProviderError {
@@ -72,6 +78,7 @@ impl ProviderError {
                 Some("the site's markup changed — update this provider's selector TOML")
             }
             Self::Blocked => Some("try again later, or disable this provider"),
+            Self::FetcherMissing { .. } => Some("see `kuro doctor` for how to install it"),
             Self::RateLimited { .. } => Some("lower `general.concurrency` in your config"),
             Self::Panic => Some("please report this scraper bug"),
             _ => None,

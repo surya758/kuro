@@ -6,6 +6,7 @@
 
 pub mod cache;
 pub mod error;
+pub mod external;
 pub mod fetch;
 pub mod orchestrator;
 pub mod provider;
@@ -14,7 +15,8 @@ pub mod types;
 
 pub use cache::HttpCache;
 pub use error::{PlayerError, ProviderError, ResolveError};
-pub use fetch::{FetchConfig, FetchCtx, DEFAULT_USER_AGENT};
+pub use external::{ExternalFetcher, DEFAULT_IMPERSONATE_COMMAND};
+pub use fetch::{FetchConfig, FetchCtx, FetchOpts, DEFAULT_USER_AGENT};
 pub use provider::Provider;
 pub use skip::{Interval, SkipTimes};
 pub use types::{
