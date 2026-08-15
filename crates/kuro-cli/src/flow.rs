@@ -169,7 +169,7 @@ async fn action_menu(
     series: &Series,
     provider: &Arc<dyn Provider>,
     episodes: &[Episode],
-    mut index: usize,
+    index: usize,
 ) -> Result<Step> {
     loop {
         let episode = &episodes[index];
@@ -189,11 +189,9 @@ async fn action_menu(
         };
 
         match picked {
-            0 => match play_and_continue(app, series, provider, episodes, index).await? {
-                PlayNext::Continue(next) => index = next,
-                PlayNext::Back => return Ok(Step::Back),
-                PlayNext::Quit => return Ok(Step::Quit),
-            },
+            // Playback runs its own next/replay loop and only returns once the
+            // viewer wants out of this episode entirely.
+            0 => return play_and_continue(app, series, provider, episodes, index).await,
             1 => {
                 commands::download_episodes(
                     app,
@@ -358,22 +356,17 @@ fn resume_index(episodes: &[Episode], launched: usize, finished: Option<f32>) ->
         .unwrap_or(launched)
 }
 
-/// Outcome of the post-playback menu.
-enum PlayNext {
-    /// Reopen the action menu on this episode.
-    Continue(usize),
-    Back,
-    Quit,
-}
-
 /// Play an episode, then offer to continue with the next one.
+///
+/// Returns only when the viewer is done with this episode: "next" and "replay" are
+/// handled by the loop here, so a return means back to the episode list or out.
 async fn play_and_continue(
     app: &mut App,
     series: &Series,
     provider: &Arc<dyn Provider>,
     episodes: &[Episode],
     index: usize,
-) -> Result<PlayNext> {
+) -> Result<Step> {
     let mut current = index;
 
     loop {
@@ -408,7 +401,7 @@ async fn play_and_continue(
 
         let picked = match ui::select("Finished", &items)? {
             Choice::Picked(i) => i,
-            Choice::Cancelled => return Ok(PlayNext::Back),
+            Choice::Cancelled => return Ok(Step::Back),
         };
 
         // The "next" row only exists when there is a next episode, so the
@@ -418,8 +411,10 @@ async fn play_and_continue(
             0 if next.is_some() => current += 1,
             // Replay: fall through the loop and play the same episode again.
             i if i == offset => continue,
-            i if i == offset + 1 => return Ok(PlayNext::Continue(current)),
-            _ => return Ok(PlayNext::Quit),
+            // "Back to episodes" means the episode list, not this episode's own
+            // action menu — returning to the latter made the label a lie.
+            i if i == offset + 1 => return Ok(Step::Back),
+            _ => return Ok(Step::Quit),
         }
     }
 }

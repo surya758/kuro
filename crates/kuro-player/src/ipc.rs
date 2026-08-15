@@ -52,6 +52,11 @@ async fn get_number(socket: &Path, property: &str) -> Option<f64> {
     request(socket, &command).await?.get("data")?.as_f64()
 }
 
+async fn get_flag(socket: &Path, property: &str) -> Option<bool> {
+    let command = format!(r#"{{"command":["get_property","{property}"]}}"#);
+    request(socket, &command).await?.get("data")?.as_bool()
+}
+
 /// Add a stream to the end of the player's playlist, labelled `title`.
 ///
 /// Goes via a one-entry M3U rather than `loadfile`, because a playlist entry's
@@ -86,8 +91,36 @@ mod tests {
 
     /// Stand-in for mpv's IPC socket.
     ///
-    /// `answers` maps a property to the number mpv would return, or `None` for the
+    /// `answers` maps a property to the JSON mpv would return, or `None` for the
     /// "property unavailable" reply it sends whenever no file is loaded.
+    fn spawn_raw_server(
+        path: &Path,
+        answers: Vec<(&'static str, Option<&'static str>)>,
+    ) -> tokio::task::JoinHandle<()> {
+        let listener = UnixListener::bind(path).expect("bind test socket");
+        tokio::spawn(async move {
+            loop {
+                let Ok((stream, _)) = listener.accept().await else {
+                    return;
+                };
+                let mut reader = BufReader::new(stream);
+                let mut line = String::new();
+                if reader.read_line(&mut line).await.unwrap_or(0) == 0 {
+                    continue;
+                }
+                let unavailable = r#"{"error":"property unavailable"}"#.to_string();
+                let reply = answers
+                    .iter()
+                    .find(|(property, _)| line.contains(property))
+                    .and_then(|(_, value)| *value)
+                    .map(|v| format!(r#"{{"data":{v},"error":"success"}}"#))
+                    .unwrap_or(unavailable);
+                let _ = reader.get_mut().write_all(reply.as_bytes()).await;
+                let _ = reader.get_mut().write_all(b"\n").await;
+            }
+        })
+    }
+
     fn spawn_server(
         path: &Path,
         answers: Vec<(&'static str, Option<f64>)>,
@@ -166,6 +199,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_player_holding_no_file_reports_idle() {
+        // What a player that outlived its window looks like: still answering, but
+        // with nothing loaded. Distinct from a playlist transition, so the caller
+        // can end the episode instead of waiting forever.
+        let path = socket_path("idle-core");
+        let server = spawn_raw_server(
+            &path,
+            vec![("time-pos", None), ("idle-active", Some("true"))],
+        );
+
+        assert_eq!(poll_progress(&path).await, Poll::Idle);
+
+        server.abort();
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[tokio::test]
+    async fn a_loading_player_is_not_idle() {
+        // Mid-transition: no position yet, but a file is on its way. Calling this
+        // idle would cut the session off between episodes.
+        let path = socket_path("loading");
+        let server = spawn_raw_server(
+            &path,
+            vec![("time-pos", None), ("idle-active", Some("false"))],
+        );
+
+        assert_eq!(poll_progress(&path).await, Poll::Unavailable);
+
+        server.abort();
+        std::fs::remove_file(&path).ok();
+    }
+
+    #[tokio::test]
     async fn a_player_without_playlist_support_is_still_tracked() {
         // Very old mpv builds lack `playlist-pos`; the session is then a single item.
         let path = socket_path("no-playlist-pos");
@@ -228,22 +294,36 @@ pub async fn set_media_title(socket: &Path, title: &str) -> bool {
 pub enum Poll {
     /// Playlist index and position.
     Progress(usize, Progress),
-    /// The player is alive but has nothing to report yet.
+    /// The player is alive but has nothing to report *yet* — loading a file, or
+    /// moving between playlist entries.
     Unavailable,
+    /// The player is alive with nothing loaded at all.
+    ///
+    /// Distinct from [`Poll::Unavailable`], which looks identical through
+    /// `time-pos` alone. A player that outlives its window — closing IINA's window
+    /// with ⌘W quits the window, not the app — keeps answering on the socket, so
+    /// this is the only thing separating "the viewer is done" from "the next
+    /// episode is a moment away".
+    Idle,
     /// The socket is unreachable: playback is over.
     Closed,
 }
 
 pub async fn poll_progress(socket: &Path) -> Poll {
-    // An unreachable socket is the *only* end-of-playback signal. Checking the
-    // connection on its own keeps that verdict independent of whether any given
-    // property happens to be readable at this instant.
+    // An unreachable socket is one end-of-playback signal. Checking the connection
+    // on its own keeps that verdict independent of whether any given property
+    // happens to be readable at this instant.
     if UnixStream::connect(socket).await.is_err() {
         return Poll::Closed;
     }
 
     let Some(position) = get_number(socket, "time-pos").await else {
-        return Poll::Unavailable;
+        // No position has two causes worth telling apart, and `idle-active` is what
+        // tells them apart: an idle core holds no file, a busy one is mid-load.
+        return match get_flag(socket, "idle-active").await {
+            Some(true) => Poll::Idle,
+            _ => Poll::Unavailable,
+        };
     };
     let duration = get_number(socket, "duration").await;
     // Absent on very old mpv builds; treat the session as a single item then.

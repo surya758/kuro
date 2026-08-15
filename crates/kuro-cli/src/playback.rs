@@ -230,6 +230,13 @@ async fn resolve_skip(
 /// links that expire before it reaches them.
 const LOOKAHEAD: usize = 2;
 
+/// Consecutive idle polls before an episode counts as finished.
+///
+/// At one poll every two seconds this is a few seconds of the player holding no
+/// file — long enough that queueing up the next episode cannot trip it, short
+/// enough that closing the window does not feel like a hang.
+const IDLE_POLLS_BEFORE_DONE: u8 = 3;
+
 /// Resolve the next few episodes and append them to the running player's playlist.
 ///
 /// This is what makes the player's own next/previous work part-way through an
@@ -351,31 +358,63 @@ fn spawn_progress_recorder(
     target: HistoryTarget,
     playlist: Arc<std::sync::Mutex<Vec<(f32, String)>>>,
     last_played: Arc<std::sync::Mutex<Option<f32>>>,
+    player_gone: Arc<tokio::sync::Notify>,
 ) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
-        let Ok(paths) = kuro_store::Paths::discover() else {
+        // Keep watching the socket even when history cannot be written: the caller
+        // relies on this task to notice the player closing.
+        let paths = kuro_store::Paths::discover().ok();
+        if paths.is_none() {
             warn!("cannot locate data directory; progress will not be saved");
-            return;
-        };
+        }
 
         let started = std::time::Instant::now();
         let mut last: std::collections::BTreeMap<usize, u64> = std::collections::BTreeMap::new();
         let mut current_index: Option<usize> = None;
+        let mut seen_player = false;
+        let mut idle_polls = 0u8;
 
         loop {
             tokio::time::sleep(Duration::from_secs(2)).await;
 
             let (index, progress) = match ipc::poll_progress(&socket).await {
-                ipc::Poll::Progress(index, progress) => (index, progress),
+                ipc::Poll::Progress(index, progress) => {
+                    seen_player = true;
+                    idle_polls = 0;
+                    (index, progress)
+                }
                 // mpv has no position between playlist entries, which is exactly
                 // what skipping to the next episode looks like. Keep polling: the
                 // player is still there and the next episode is about to start.
-                ipc::Poll::Unavailable => continue,
+                ipc::Poll::Unavailable => {
+                    seen_player = true;
+                    idle_polls = 0;
+                    continue;
+                }
+                ipc::Poll::Idle => {
+                    seen_player = true;
+                    idle_polls += 1;
+                    // A player holding no file has either been closed or run out
+                    // of playlist. Requiring several in a row keeps a slow load
+                    // between episodes from being mistaken for either.
+                    if idle_polls >= IDLE_POLLS_BEFORE_DONE {
+                        debug!("player idle; treating episode as finished");
+                        player_gone.notify_one();
+                        return;
+                    }
+                    continue;
+                }
                 ipc::Poll::Closed => {
-                    // Before the grace period the player simply has not opened the
-                    // socket yet; after it, playback has genuinely ended.
-                    if started.elapsed() > Duration::from_secs(30) {
+                    // Until the player has answered once, a dead socket only means
+                    // it has not started yet — hence the grace period. After that,
+                    // or once it has answered at all, the episode is over.
+                    if seen_player || started.elapsed() > Duration::from_secs(30) {
                         debug!("player IPC closed; progress recorder stopping");
+                        // Closing IINA's window with ⌘W leaves the app — and so the
+                        // launcher process — running, so waiting on that process
+                        // alone would hang here forever. The socket dying is the
+                        // signal that actually tracks the window.
+                        player_gone.notify_one();
                         return;
                     }
                     continue;
@@ -404,7 +443,10 @@ fn spawn_progress_recorder(
                 current_index = Some(index);
             }
 
-            let Ok(mut history) = kuro_store::History::load(&paths) else {
+            let Some(paths) = paths.as_ref() else {
+                continue;
+            };
+            let Ok(mut history) = kuro_store::History::load(paths) else {
                 continue;
             };
             history.record(
@@ -416,9 +458,11 @@ fn spawn_progress_recorder(
                 progress.position_secs,
                 progress.duration_secs,
             );
-            if let Err(e) = history.save(&paths) {
+            // Keep polling on a write failure rather than stopping: this task is
+            // also what tells the caller the player has closed.
+            if let Err(e) = history.save(paths) {
                 warn!(error = %e, "could not save watch history");
-                return;
+                continue;
             }
             debug!(
                 episode = number,
@@ -537,6 +581,9 @@ async fn launch(
     // launched if they used the player's own next/previous controls.
     let last_played = Arc::new(std::sync::Mutex::new(None));
 
+    // Raised by the recorder when the IPC socket dies.
+    let player_gone = Arc::new(tokio::sync::Notify::new());
+
     // Save progress as it happens, so quitting kuro does not discard the session.
     let recorder = spawn_progress_recorder(
         socket_path,
@@ -548,9 +595,17 @@ async fn launch(
         },
         playlist,
         Arc::clone(&last_played),
+        Arc::clone(&player_gone),
     );
 
-    handle.wait().await.ok();
+    // Two different things end an episode, and neither implies the other. ⌘Q quits
+    // IINA, so the launcher process exits. ⌘W closes only the window: the app keeps
+    // running, the launcher never returns, and waiting on it alone hangs forever.
+    // Whichever happens first means this episode is done.
+    tokio::select! {
+        _ = handle.wait() => {}
+        _ = player_gone.notified() => debug!("player window closed"),
+    }
 
     // Progress was already checkpointed as it played; these just stop cleanly.
     recorder.abort();

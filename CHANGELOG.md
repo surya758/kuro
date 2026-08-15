@@ -1,5 +1,18 @@
 # Changelog
 
+## v0.4.6
+
+### Fixed
+
+- **"Back to episodes" reopened the same episode instead of the list.** It returned
+  to the action menu for the episode just watched, which is not what the label says.
+  Esc already went to the list; the button now agrees with it.
+- **Closing the player window without quitting the app left kuro waiting.** An
+  episode ended only when the launcher process exited — which happens on ⌘Q, but not
+  on ⌘W, where IINA keeps running with no window. An episode now also ends when the
+  player's IPC socket dies, or when the player sits with no file loaded for several
+  polls.
+
 ## v0.4.5
 
 ### Fixed
