@@ -4,11 +4,13 @@
 //! TOML. Sites needing genuinely novel logic — a new obfuscation scheme, an auth
 //! handshake — get their own module implementing `kuro_core::Provider` directly.
 
+pub mod animecube;
 pub mod declarative;
 pub mod hosts;
 pub mod json;
 pub mod parse;
 pub mod registry;
+pub mod rsc;
 pub mod spec;
 
 pub use declarative::DeclarativeProvider;

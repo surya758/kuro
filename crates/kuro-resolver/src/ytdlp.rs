@@ -49,6 +49,9 @@ struct YtDlpFormat {
     acodec: Option<String>,
     #[serde(default)]
     http_headers: Option<HashMap<String, String>>,
+    /// The master playlist a rendition came from, when the extractor reports one.
+    #[serde(default)]
+    manifest_url: Option<String>,
 }
 
 impl YtDlpFormat {
@@ -326,6 +329,36 @@ impl StreamResolver for YtDlpResolver {
             .filter_map(to_stream)
             .collect();
 
+        // With nothing pre-muxed, hand over the master playlist instead of a single
+        // rendition: it lists the video and audio tracks together, and the player
+        // pairs them itself. A lone video rendition would play silent. Hosts that
+        // serve high-bitrate video — 4K60 among them — split the tracks this way,
+        // so this is the normal path there rather than an edge case.
+        if streams.is_empty() {
+            if let Some(master) = output
+                .formats
+                .iter()
+                .find_map(|f| f.manifest_url.as_deref())
+                .and_then(|m| Url::parse(m).ok())
+            {
+                debug!(%url, "no muxed format; using the master playlist");
+                let headers = output
+                    .formats
+                    .iter()
+                    .find_map(|f| f.http_headers.clone())
+                    .unwrap_or_default();
+                streams.push(Stream {
+                    url: master,
+                    kind: StreamKind::Hls,
+                    // Left unset deliberately: the master spans every rendition, so
+                    // claiming one height would misreport what is about to play.
+                    height: None,
+                    bitrate_kbps: None,
+                    headers,
+                });
+            }
+        }
+
         if streams.is_empty() {
             streams = output
                 .formats
@@ -454,6 +487,7 @@ mod tests {
             vcodec: Some("avc1".into()),
             acodec: Some("none".into()),
             http_headers: None,
+            manifest_url: None,
         };
         assert!(f.has_video());
         assert!(!f.has_audio());
@@ -472,6 +506,7 @@ mod tests {
             vcodec: None,
             acodec: None,
             http_headers: None,
+            manifest_url: None,
         };
         assert!(f.has_video());
         assert!(f.has_audio());

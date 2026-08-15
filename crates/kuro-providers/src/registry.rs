@@ -70,11 +70,30 @@ impl Registry {
             }
         }
 
+        registry.insert_code_providers();
+
         if let Some(dir) = user_dir {
             registry.overlay_user_dir(dir);
         }
 
         registry
+    }
+
+    /// Providers written in Rust because a selector TOML cannot express them.
+    ///
+    /// Registered after the specs and before the user directory, so a user file of
+    /// the same name still wins — the override rule stays the same whichever way a
+    /// provider is implemented.
+    fn insert_code_providers(&mut self) {
+        let provider = crate::animecube::AnimeCubeProvider::new();
+        self.providers.insert(
+            provider.id().to_string(),
+            LoadedProvider {
+                needs_impersonation: false,
+                provider: Arc::new(provider),
+                from_user_dir: false,
+            },
+        );
     }
 
     fn overlay_user_dir(&mut self, dir: &Path) {
