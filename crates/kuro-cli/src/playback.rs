@@ -370,10 +370,7 @@ fn spawn_progress_recorder(
             }
             last.insert(index, progress.position_secs);
 
-            let entry = playlist
-                .lock()
-                .ok()
-                .and_then(|p| p.get(index).cloned());
+            let entry = playlist.lock().ok().and_then(|p| p.get(index).cloned());
             let Some((number, entry_title)) = entry else {
                 continue;
             };
@@ -401,7 +398,11 @@ fn spawn_progress_recorder(
                 warn!(error = %e, "could not save watch history");
                 return;
             }
-            debug!(episode = number, position = progress.position_secs, "checkpointed");
+            debug!(
+                episode = number,
+                position = progress.position_secs,
+                "checkpointed"
+            );
         }
     })
 }

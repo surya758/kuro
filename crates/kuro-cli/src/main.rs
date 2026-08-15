@@ -56,7 +56,6 @@ async fn run(cli: Cli) -> Result<()> {
         return Ok(());
     }
 
-
     let mut app = App::new(
         cli.provider,
         cli.quality,

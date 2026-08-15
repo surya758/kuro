@@ -51,10 +51,7 @@ async fn request(socket: &Path, command: &str) -> Option<serde_json::Value> {
 
 async fn get_number(socket: &Path, property: &str) -> Option<f64> {
     let command = format!(r#"{{"command":["get_property","{property}"]}}"#);
-    request(socket, &command)
-        .await?
-        .get("data")?
-        .as_f64()
+    request(socket, &command).await?.get("data")?.as_f64()
 }
 
 /// Add a stream to the end of the player's playlist, labelled `title`.
