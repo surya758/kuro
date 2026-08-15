@@ -203,17 +203,23 @@ minutes until the site is back. Both numbers are configurable.
 anidb.app is behind a challenge that inspects the TLS handshake, so no ordinary HTTP
 client reaches it — headers make no difference. Fetching it needs
 [curl-impersonate](https://github.com/lexiforest/curl-impersonate), which performs a
-browser-shaped handshake. It is not in Homebrew core, so install it by hand:
+browser-shaped handshake.
+
+**Installing via Homebrew? Nothing to do** — it comes as a dependency.
+
+Building from source, install it yourself (it is not in Homebrew core):
 
 ```sh
+brew install surya758/tap/curl-impersonate   # or, by hand:
+
 # Apple Silicon; use x86_64-macos on Intel
-curl -LO https://github.com/lexiforest/curl-impersonate/releases/latest/download/curl-impersonate-v2.1.0.arm64-macos.tar.gz
+curl -LO https://github.com/lexiforest/curl-impersonate/releases/download/v2.1.0/curl-impersonate-v2.1.0.arm64-macos.tar.gz
 mkdir -p ~/.local/bin && tar xzf curl-impersonate-*.tar.gz -C ~/.local/bin
 export PATH="$HOME/.local/bin:$PATH"          # add to your shell profile
-kuro doctor                                   # should report: ✓ impersonate
 ```
 
-Not on `PATH`? Point kuro at it instead:
+`kuro doctor` reports `✓ impersonate` once it is found. Not on `PATH`? Point kuro at
+it instead:
 
 ```toml
 [general]
