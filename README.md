@@ -37,7 +37,10 @@ brew install --cask iina    # the player
 kuro doctor                 # verify everything is wired up
 ```
 
-`yt-dlp`, `curl-impersonate` and shell completions come along with it.
+`yt-dlp`, `curl-impersonate`, `mpv` and shell completions come along with it.
+
+IINA remains the player. `mpv` is used only for sources IINA cannot play — see
+[Players](#players).
 
 <details>
 <summary>From source</summary>
@@ -102,7 +105,10 @@ defaults. `NO_COLOR=1` disables colour.
 
 ## Providers
 
-Bundled: **luciferdonghua**, **donghuastream**, **anidb**.
+Bundled: **luciferdonghua**, **donghuastream**, **anidb**, **animecube**.
+
+**animecube** serves 4K60 with real subtitle tracks, where the others top out at
+1080p with subtitles burned into the picture. It needs `mpv` — see below.
 
 ```sh
 kuro provider list                        # state + health for each
@@ -120,6 +126,23 @@ through [curl-impersonate](https://github.com/lexiforest/curl-impersonate) — a
 Homebrew dependency, so there is nothing to do. Only its scraping calls use it;
 video comes from an ordinary CDN. Without it, anidb fails and nothing else does. If
 the binary is not on `PATH`, set `general.impersonate_command` to its full path.
+
+### Players
+
+IINA plays everything by default. Some sources publish no combined video+audio
+rendition and have to be resolved by the player itself, which IINA cannot do — its
+bundled extractor is too old for those hosts and it buffers them badly. kuro uses
+`mpv` for exactly those, automatically, and leaves everything else on IINA.
+
+To use one player throughout:
+
+```toml
+[player]
+backend = "mpv"     # or "iina", the default
+```
+
+`kuro doctor` reports both. Without mpv, animecube will not play; nothing else is
+affected.
 
 ### Adding a site
 

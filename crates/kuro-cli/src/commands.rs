@@ -5,6 +5,7 @@ use crate::cli::{BookmarkAction, CacheAction, ConfigAction, EpisodeSpec, Provide
 use crate::playback::{play, PlayRequest};
 use anyhow::{Context, Result};
 use kuro_core::{orchestrator, Episode, Provider, Series, SeriesStatus};
+use kuro_player::Player;
 use kuro_store::{Bookmark, Bookmarks, History};
 use std::sync::Arc;
 use std::time::Instant;
@@ -309,6 +310,17 @@ pub async fn download(
     out: &std::path::Path,
     jobs: usize,
 ) -> Result<()> {
+    // Some sources are resolved by the player rather than by kuro, and IINA cannot
+    // do it — so mpv is worth reporting even when it is not the configured backend.
+    match kuro_player::MpvPlayer::discover(None) {
+        Ok(mpv) => println!("\x1b[32m✓\x1b[0m mpv        {}", mpv.binary().display()),
+        Err(_) => println!(
+            "\x1b[33m!\x1b[0m mpv        not found — sources with no muxed rendition\n\
+             \x20            (animecube) will not play\n\
+             \x20            install with: brew install mpv"
+        ),
+    }
+
     let ytdlp = kuro_resolver::ytdlp::YtDlpResolver::default();
     if !ytdlp.is_available().await {
         anyhow::bail!("yt-dlp is required for downloads — install it with: brew install yt-dlp");
@@ -364,6 +376,17 @@ pub async fn download_episodes(
     out: &std::path::Path,
     jobs: usize,
 ) -> Result<()> {
+    // Some sources are resolved by the player rather than by kuro, and IINA cannot
+    // do it — so mpv is worth reporting even when it is not the configured backend.
+    match kuro_player::MpvPlayer::discover(None) {
+        Ok(mpv) => println!("\x1b[32m✓\x1b[0m mpv        {}", mpv.binary().display()),
+        Err(_) => println!(
+            "\x1b[33m!\x1b[0m mpv        not found — sources with no muxed rendition\n\
+             \x20            (animecube) will not play\n\
+             \x20            install with: brew install mpv"
+        ),
+    }
+
     let ytdlp = kuro_resolver::ytdlp::YtDlpResolver::default();
     if !ytdlp.is_available().await {
         anyhow::bail!("yt-dlp is required for downloads — install it with: brew install yt-dlp");
@@ -909,6 +932,17 @@ pub async fn doctor(app: &mut App) -> Result<()> {
             player.binary().display()
         ),
         Err(e) => println!("\x1b[31m✗\x1b[0m player     {e}"),
+    }
+
+    // Some sources are resolved by the player rather than by kuro, and IINA cannot
+    // do it — so mpv is worth reporting even when it is not the configured backend.
+    match kuro_player::MpvPlayer::discover(None) {
+        Ok(mpv) => println!("\x1b[32m✓\x1b[0m mpv        {}", mpv.binary().display()),
+        Err(_) => println!(
+            "\x1b[33m!\x1b[0m mpv        not found — sources with no muxed rendition\n\
+             \x20            (animecube) will not play\n\
+             \x20            install with: brew install mpv"
+        ),
     }
 
     let ytdlp = kuro_resolver::ytdlp::YtDlpResolver::default();

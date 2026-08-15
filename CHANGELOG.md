@@ -1,5 +1,33 @@
 # Changelog
 
+## v0.6.0
+
+### Added
+
+- **New provider: animecube.** 2160p60 with real subtitle tracks — eight of them —
+  where the other providers stop at 1080p with subtitles burned into the picture.
+  Its catalogue and episode lists arrive as React Server Component payloads rather
+  than markup, and the playable id sits behind a two-call API with a rotating token,
+  so it is the first provider written in Rust rather than as a selector file.
+- **An mpv backend.** Some sources publish no combined video+audio rendition and
+  must be resolved by the player itself, which IINA cannot do — its bundled
+  extractor is too old for those hosts and it buffers them badly. kuro uses mpv for
+  exactly those and leaves everything else on IINA. `player.backend = "mpv"` forces
+  it everywhere; `kuro doctor` reports both.
+- **Hardware decoding under mpv.** 4K60 AV1 stutters when decoded on the CPU, which
+  is the default; VideoToolbox is now requested.
+- **RSC payload parsing**, reusable by any Next.js-backed provider.
+
+### Changed
+
+- **The quality menu shows what the host actually offers.** Opening it resolves the
+  current episode and lists the real ladder, labelled with the height each choice
+  delivers; options that resolve to the same rendition are collapsed. A fixed list
+  both over-sold sources that stop at 1080p and under-sold ones that reach 4K.
+- **Playback hints match the player in use** rather than always naming IINA's keys,
+  and a source the player resolves reports its cap instead of "unknown".
+
+
 ## v0.5.1
 
 ### Fixed
