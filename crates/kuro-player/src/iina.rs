@@ -32,7 +32,9 @@ impl IinaPlayer {
             return Err(PlayerError::NotFound(path.to_string()));
         }
 
-        if let Some(found) = which_on_path("iina-cli").or_else(|| which_on_path("iina")) {
+        if let Some(found) =
+            super::which_on_path("iina-cli").or_else(|| super::which_on_path("iina"))
+        {
             return Ok(Self { binary: found });
         }
 
@@ -44,10 +46,6 @@ impl IinaPlayer {
         }
 
         Err(PlayerError::NotFound("iina-cli".to_string()))
-    }
-
-    pub fn binary(&self) -> &std::path::Path {
-        &self.binary
     }
 
     /// Build the argument list. Separated from spawning so it can be asserted on
@@ -69,7 +67,7 @@ impl IinaPlayer {
         // One `-append` per header rather than a single comma-joined value: mpv
         // splits that option on commas, and header values legitimately contain them
         // (`Accept: text/html,application/xhtml+xml`), which would corrupt them.
-        for (name, value) in forwarded_headers(&stream.headers) {
+        for (name, value) in super::forwarded_headers(&stream.headers) {
             args.push(format!("--mpv-http-header-fields-append={name}: {value}"));
         }
 
@@ -78,7 +76,7 @@ impl IinaPlayer {
         // is pointed at the one kuro already depends on.
         if let Some(format) = &stream.ytdl_format {
             args.push(format!("--mpv-ytdl-format={format}"));
-            if let Some(ytdl) = which_on_path("yt-dlp") {
+            if let Some(ytdl) = super::which_on_path("yt-dlp") {
                 args.push(format!(
                     "--mpv-script-opt=ytdl_hook-ytdl_path={}",
                     ytdl.display()
@@ -121,35 +119,14 @@ impl IinaPlayer {
     }
 }
 
-/// Headers worth forwarding to the player.
-///
-/// Extractors return a full browser header set, but only these affect whether a
-/// CDN serves the stream. Passing the rest is noise and risks tripping mpv's own
-/// option parsing. Sorted so the generated command is deterministic.
-fn forwarded_headers(headers: &std::collections::HashMap<String, String>) -> Vec<(&str, &str)> {
-    const FORWARDED: &[&str] = &["referer", "user-agent", "origin", "cookie"];
-
-    let mut kept: Vec<(&str, &str)> = headers
-        .iter()
-        .filter(|(name, _)| FORWARDED.contains(&name.to_ascii_lowercase().as_str()))
-        .map(|(name, value)| (name.as_str(), value.as_str()))
-        .collect();
-
-    kept.sort_by_key(|(name, _)| name.to_ascii_lowercase());
-    kept
-}
-
-fn which_on_path(name: &str) -> Option<PathBuf> {
-    let path = std::env::var_os("PATH")?;
-    std::env::split_paths(&path)
-        .map(|dir| dir.join(name))
-        .find(|candidate| candidate.is_file())
-}
-
 #[async_trait]
 impl Player for IinaPlayer {
     fn name(&self) -> &str {
         "iina"
+    }
+
+    fn binary(&self) -> &std::path::Path {
+        &self.binary
     }
 
     async fn is_available(&self) -> bool {

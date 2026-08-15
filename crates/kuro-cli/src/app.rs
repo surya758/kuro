@@ -2,7 +2,7 @@
 
 use anyhow::{Context, Result};
 use kuro_core::{FetchConfig, FetchCtx, Provider, ProviderId, QualityPref};
-use kuro_player::{IinaPlayer, Player};
+use kuro_player::{IinaPlayer, MpvPlayer, Player};
 use kuro_providers::Registry;
 use kuro_resolver::ResolverChain;
 use kuro_store::{Config, HealthStore, HealthTransition, History, Paths};
@@ -136,18 +136,58 @@ impl App {
         self.config.save(&self.paths).context("saving config")
     }
 
-    pub fn player(&self) -> Result<IinaPlayer> {
-        IinaPlayer::discover(self.config.player.path.as_deref()).map_err(|e| {
+    /// The configured playback backend.
+    ///
+    /// Boxed because the choice is only known at runtime: IINA suits everyday
+    /// watching, while some sources play only in mpv.
+    pub fn player(&self) -> Result<Box<dyn Player>> {
+        let path = self.config.player.path.as_deref();
+        let backend = self.config.player.backend.to_ascii_lowercase();
+
+        let found: Result<Box<dyn Player>, kuro_core::PlayerError> = match backend.as_str() {
+            "mpv" => MpvPlayer::discover(path).map(|p| Box::new(p) as Box<dyn Player>),
+            _ => IinaPlayer::discover(path).map(|p| Box::new(p) as Box<dyn Player>),
+        };
+
+        found.map_err(|e| {
+            let hint = if backend == "mpv" {
+                "Install it with `brew install mpv`"
+            } else {
+                "Install IINA from https://iina.io"
+            };
             anyhow::anyhow!(
-                "{e}\n\nInstall IINA from https://iina.io, or set `player.path` in {}",
+                "{e}\n\n{hint}, or set `player.path` in {}",
                 self.paths.config_file().display()
             )
         })
     }
 }
 
+/// The player to use for a particular stream.
+///
+/// Sources with no muxed rendition are resolved by the player itself, and IINA
+/// cannot do it — its bundled extractor is too old for these hosts and it buffers
+/// them badly. mpv handles them, so it is used for those alone; everything else
+/// stays on the configured backend, which is the nicer thing to watch in.
+pub async fn require_player_for(app: &App, stream: &kuro_core::Stream) -> Result<Box<dyn Player>> {
+    if stream.ytdl_format.is_some() && !app.config.player.backend.eq_ignore_ascii_case("mpv") {
+        match MpvPlayer::discover(None) {
+            Ok(mpv) if mpv.is_available().await => {
+                tracing::debug!("source needs player-side resolution; using mpv");
+                return Ok(Box::new(mpv));
+            }
+            // Falling through is honest: the configured player at least tries,
+            // and its failure is more informative than one about a missing mpv.
+            _ => tracing::warn!(
+                "this source plays best in mpv, which was not found — install it with `brew install mpv`"
+            ),
+        }
+    }
+    require_player(app).await
+}
+
 /// Ensure a player binary is actually usable before a command relies on it.
-pub async fn require_player(app: &App) -> Result<IinaPlayer> {
+pub async fn require_player(app: &App) -> Result<Box<dyn Player>> {
     let player = app.player()?;
     if !player.is_available().await {
         anyhow::bail!(

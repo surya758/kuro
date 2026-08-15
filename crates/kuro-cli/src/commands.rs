@@ -5,7 +5,6 @@ use crate::cli::{BookmarkAction, CacheAction, ConfigAction, EpisodeSpec, Provide
 use crate::playback::{play, PlayRequest};
 use anyhow::{Context, Result};
 use kuro_core::{orchestrator, Episode, Provider, Series, SeriesStatus};
-use kuro_player::Player;
 use kuro_store::{Bookmark, Bookmarks, History};
 use std::sync::Arc;
 use std::time::Instant;

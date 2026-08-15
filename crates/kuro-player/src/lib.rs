@@ -1,16 +1,18 @@
 //! Playback.
 //!
-//! Only IINA is implemented, but the [`Player`] trait keeps the rest of the app
-//! from depending on it directly.
+//! Two backends: IINA for everyday watching, mpv for sources it cannot handle.
+//! The [`Player`] trait keeps the rest of the app from depending on either.
 
 pub mod iina;
 pub mod ipc;
+pub mod mpv;
 
 use async_trait::async_trait;
 use kuro_core::{PlayerError, SkipTimes, Stream};
 
 pub use iina::IinaPlayer;
 pub use ipc::Progress;
+pub use mpv::MpvPlayer;
 
 #[derive(Debug, Clone, Default)]
 pub struct PlaybackOpts {
@@ -60,6 +62,9 @@ impl PlayHandle {
 pub trait Player: Send + Sync {
     fn name(&self) -> &str;
 
+    /// Path of the binary that would be launched, for diagnostics.
+    fn binary(&self) -> &std::path::Path;
+
     async fn is_available(&self) -> bool;
 
     /// The exact command that [`Player::play`] would run, for `--dry-run`.
@@ -107,4 +112,31 @@ pub fn ipc_socket_path() -> String {
         .join(format!("kuro-mpv-{}.sock", std::process::id()))
         .display()
         .to_string()
+}
+
+/// Headers worth forwarding to a player.
+///
+/// Extractors return a full browser header set, but only these affect whether a
+/// CDN serves the stream. Passing the rest is noise and risks tripping option
+/// parsing. Sorted so generated commands are deterministic.
+pub(crate) fn forwarded_headers(
+    headers: &std::collections::HashMap<String, String>,
+) -> Vec<(&str, &str)> {
+    const FORWARDED: &[&str] = &["referer", "user-agent", "origin", "cookie"];
+
+    let mut kept: Vec<(&str, &str)> = headers
+        .iter()
+        .filter(|(name, _)| FORWARDED.contains(&name.to_ascii_lowercase().as_str()))
+        .map(|(name, value)| (name.as_str(), value.as_str()))
+        .collect();
+
+    kept.sort_by_key(|(name, _)| name.to_ascii_lowercase());
+    kept
+}
+
+pub(crate) fn which_on_path(name: &str) -> Option<std::path::PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .map(|dir| dir.join(name))
+        .find(|candidate| candidate.is_file())
 }

@@ -4,11 +4,11 @@
 //! preference, then tried in turn until one yields a playable stream. Only when
 //! every mirror fails is the episode reported unplayable.
 
-use crate::app::{require_player, App};
+use crate::app::{require_player_for, App};
 use anyhow::{Context, Result};
 use futures::future::join_all;
 use kuro_core::{Episode, Mirror, Provider, QualityPref, Series, Stream};
-use kuro_player::{ipc, ipc_socket_path, PlaybackOpts, Player};
+use kuro_player::{ipc, ipc_socket_path, PlaybackOpts};
 use kuro_providers::hosts;
 use std::sync::Arc;
 use std::time::Duration;
@@ -536,7 +536,7 @@ async fn launch(
         skip_script,
     };
 
-    let player = require_player(app).await?;
+    let player = require_player_for(app, stream).await?;
 
     if app.dry_run {
         let preview = player.command_preview(stream, &opts);
