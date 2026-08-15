@@ -75,7 +75,12 @@ pub struct SearchSelectors {
     #[serde(default)]
     pub container: Option<String>,
     pub title: String,
-    pub url: String,
+    /// Selector for the link, relative to the item.
+    ///
+    /// Omit when the item *is* the link: card layouts routinely wrap the whole tile
+    /// in one `<a>`, and a descendant selector can never match the item itself.
+    #[serde(default)]
+    pub url: Option<String>,
     #[serde(default)]
     pub poster: Option<String>,
 }

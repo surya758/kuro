@@ -921,6 +921,34 @@ pub async fn doctor(app: &mut App) -> Result<()> {
         ),
     }
 
+    // Only worth reporting when a provider actually asks for it, so the common
+    // two-provider setup is not nagged about a dependency it never uses.
+    let needs_impersonation: Vec<String> = app
+        .registry
+        .impersonating_ids()
+        .map(str::to_string)
+        .collect();
+
+    if !needs_impersonation.is_empty() {
+        match app.ctx.impersonator() {
+            Some(fetcher) if fetcher.is_available().await => {
+                println!("\x1b[32m✓\x1b[0m impersonate {}", fetcher.command())
+            }
+            Some(fetcher) => println!(
+                "\x1b[33m!\x1b[0m impersonate {} not found — {} unusable\n\
+                 \x20            these providers sit behind a TLS-level challenge; install\n\
+                 \x20            curl-impersonate from https://github.com/lexiforest/curl-impersonate\n\
+                 \x20            and put it on PATH, or set `general.impersonate_command`",
+                fetcher.command(),
+                needs_impersonation.join(", ")
+            ),
+            None => println!(
+                "\x1b[33m!\x1b[0m impersonate disabled — {} unusable",
+                needs_impersonation.join(", ")
+            ),
+        }
+    }
+
     println!("\nProviders:");
     let recheck = app.config.health.recheck_interval;
     for id in app.registry.ids().map(str::to_string).collect::<Vec<_>>() {

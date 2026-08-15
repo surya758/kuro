@@ -46,6 +46,7 @@ impl App {
         let ctx = FetchCtx::new(FetchConfig {
             timeout: config.general.request_timeout,
             cache_dir: caching_on.then(|| paths.cache_dir()),
+            impersonate_command: Some(config.general.impersonate_command.clone()),
             ..FetchConfig::default()
         })
         .context("building HTTP client")?;

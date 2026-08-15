@@ -1,0 +1,62 @@
+# AniDB.
+#
+# Unlike the WordPress-theme providers, this one has a JSON backend and serves its
+# own HLS rather than embedding a third-party player. That makes it the most
+# reliable of the three once reachable — no Rumble/Dailymotion middleman to break —
+# but it sits behind a challenge that inspects the TLS handshake, so it needs
+# `impersonate` and the external fetcher that implies.
+#
+# Verified chain:
+#   /browse?q=                            -> HTML cards
+#   /api/frontend/anime/{id}/episodes     -> JSON  {"episodes":[{id,number}]}
+#   /api/frontend/episode/{id}/languages  -> JSON  {"languages":[{name,embed_url}]}
+#   /embed/{token}                        -> HTML  file: '…/master.m3u8'
+#   master.m3u8                           -> 1080p / 720p / 360p
+#
+# The CDN is *not* challenged, so playback needs no special client — only the
+# scraping calls above do.
+
+id           = "anidb"
+display_name = "AniDB"
+base_url     = "https://anidb.app"
+
+[endpoints]
+search = "/browse?q={query}"
+series = "/anime/{slug}"
+# Episodes live behind an API keyed by the slug's trailing digits, not on the
+# series page: `solo-leveling-4883` -> 4883.
+episodes = "/api/frontend/anime/{id}/episodes"
+
+[selectors.search]
+container = "div.anime-grid"
+item      = "a.anime-card"
+# No `url`: the card is itself the anchor, so the href is on the item.
+title     = "p.text-faint"
+poster    = "img"
+
+# The series page is React-rendered, so its detail markup is not worth pinning to
+# selectors that will churn. Titles and episodes come from search and the API.
+[selectors.series]
+
+[selectors.episodes]
+format = "json"
+item   = "episodes"
+number = "number"
+id     = "id"
+url    = "/api/frontend/episode/{id}/languages"
+
+# Audio languages are the mirrors here: sub and dub are separate embeds of the
+# same episode, so mirror failover doubles as language choice.
+[selectors.mirrors]
+format = "json"
+item   = "languages"
+label  = "name"
+value  = "embed_url"
+
+# The player is script-configured; there is no iframe to select.
+[selectors.embed]
+script_key = "file"
+
+[request]
+impersonate = true
+referer     = "https://anidb.app/"

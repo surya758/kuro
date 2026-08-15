@@ -69,6 +69,10 @@ impl ExternalFetcher {
         let mut cmd = Command::new(&self.command);
         cmd.arg("--impersonate")
             .arg(IMPERSONATE_TARGET)
+            // Impersonation advertises the browser's `Accept-Encoding`, so the
+            // reply comes back gzip/brotli/zstd-compressed. Without this the body
+            // is binary and every selector silently matches nothing.
+            .arg("--compressed")
             .arg("--silent")
             .arg("--show-error")
             .arg("--location")

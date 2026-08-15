@@ -119,16 +119,18 @@ pub fn parse_search(
 ) -> Result<Vec<Series>, ProviderError> {
     let doc = Html::parse_document(html);
     let item_sel = compile(&sel.item)?;
-    let url_sel = compile(&sel.url)?;
+    let url_sel = sel.url.as_deref().map(compile).transpose()?;
 
     let mut out = Vec::new();
 
     for item in doc.select(&item_sel) {
-        let Some(href) = item
-            .select(&url_sel)
-            .next()
-            .and_then(|a| a.value().attr("href"))
-        else {
+        // With no selector the item carries the href itself, which `select` cannot
+        // reach — it walks descendants only.
+        let href = match &url_sel {
+            Some(s) => item.select(s).next().and_then(|a| a.value().attr("href")),
+            None => item.value().attr("href"),
+        };
+        let Some(href) = href else {
             continue;
         };
 

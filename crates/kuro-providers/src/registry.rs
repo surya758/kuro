@@ -22,12 +22,18 @@ const BUILTIN_SPECS: &[(&str, &str)] = &[
         "donghuastream",
         include_str!("../../../providers.d/donghuastream.toml"),
     ),
+    ("anidb", include_str!("../../../providers.d/anidb.toml")),
 ];
 
 pub struct LoadedProvider {
     pub provider: Arc<dyn Provider>,
     /// True when this spec came from the user's `providers.d` rather than the binary.
     pub from_user_dir: bool,
+    /// True when the spec asks to be fetched through the external client.
+    ///
+    /// Kept here because the spec itself is consumed at load time, and `doctor`
+    /// needs to know whether the external binary is worth mentioning at all.
+    pub needs_impersonation: bool,
 }
 
 #[derive(Default)]
@@ -49,6 +55,7 @@ impl Registry {
                     registry.providers.insert(
                         p.spec().id.clone(),
                         LoadedProvider {
+                            needs_impersonation: p.spec().request.impersonate,
                             provider: Arc::new(p),
                             from_user_dir: false,
                         },
@@ -107,6 +114,7 @@ impl Registry {
                     self.providers.insert(
                         p.spec().id.clone(),
                         LoadedProvider {
+                            needs_impersonation: p.spec().request.impersonate,
                             provider: Arc::new(p),
                             from_user_dir: true,
                         },
@@ -129,6 +137,14 @@ impl Registry {
             .get(id)
             .map(|l| l.from_user_dir)
             .unwrap_or(false)
+    }
+
+    /// Ids of providers that can only be reached through the external client.
+    pub fn impersonating_ids(&self) -> impl Iterator<Item = &str> {
+        self.providers
+            .iter()
+            .filter(|(_, loaded)| loaded.needs_impersonation)
+            .map(|(id, _)| id.as_str())
     }
 
     pub fn ids(&self) -> impl Iterator<Item = &str> {

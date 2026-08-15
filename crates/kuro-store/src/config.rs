@@ -30,6 +30,11 @@ pub struct General {
     /// Cache scraped pages on disk between commands. `--no-cache` overrides this
     /// for a single run.
     pub cache: bool,
+    /// Binary used by providers behind a TLS-level challenge.
+    ///
+    /// A bare name is looked up on `PATH`; an absolute path is used as given, which
+    /// is the common case since `curl-impersonate` is not in Homebrew core.
+    pub impersonate_command: String,
 }
 
 impl Default for General {
@@ -40,6 +45,7 @@ impl Default for General {
             search_timeout: Duration::from_secs(8),
             request_timeout: Duration::from_secs(15),
             cache: true,
+            impersonate_command: kuro_core::DEFAULT_IMPERSONATE_COMMAND.to_string(),
         }
     }
 }
