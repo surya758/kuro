@@ -10,7 +10,7 @@ use async_trait::async_trait;
 use kuro_core::{QualityPref, ResolveError, Stream, StreamKind};
 use serde::Deserialize;
 use std::collections::HashMap;
-use tracing::debug;
+use tracing::{debug, warn};
 use url::Url;
 
 /// Machine-readable progress, one line per tick on stdout.
@@ -220,6 +220,27 @@ impl YtDlpResolver {
     }
 
     async fn run_json(&self, url: &Url) -> Result<YtDlpOutput, ResolveError> {
+        // Hosts rate-limit and their metadata APIs time out; a single blip should
+        // not retire a mirror, which on some providers is the only one an episode
+        // has. Permanent answers — removed, private, geo-blocked — fail at once.
+        let mut attempt = 0u32;
+        loop {
+            attempt += 1;
+            match self.run_json_once(url).await {
+                Ok(output) => return Ok(output),
+                Err(e) => {
+                    let retryable = matches!(&e, ResolveError::YtDlp(m) if is_transient(m));
+                    if !retryable || attempt > MAX_RESOLVE_ATTEMPTS {
+                        return Err(e);
+                    }
+                    warn!(%url, attempt, error = %e, "retrying resolution");
+                    tokio::time::sleep(RESOLVE_BACKOFF * attempt).await;
+                }
+            }
+        }
+    }
+
+    async fn run_json_once(&self, url: &Url) -> Result<YtDlpOutput, ResolveError> {
         debug!(%url, "invoking yt-dlp");
 
         let output = tokio::process::Command::new(&self.binary)
@@ -236,15 +257,71 @@ impl YtDlpResolver {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            let message = stderr
-                .lines()
-                .find(|l| l.contains("ERROR"))
-                .unwrap_or_else(|| stderr.trim())
-                .to_string();
-            return Err(ResolveError::YtDlp(message));
+            return Err(ResolveError::YtDlp(concise_error(&stderr)));
         }
 
         serde_json::from_slice(&output.stdout).map_err(|e| ResolveError::BadOutput(e.to_string()))
+    }
+}
+
+/// How many times a transient resolution failure is worth repeating.
+const MAX_RESOLVE_ATTEMPTS: u32 = 3;
+
+/// Grows with each attempt, to let a rate-limited host recover.
+const RESOLVE_BACKOFF: std::time::Duration = std::time::Duration::from_millis(700);
+
+/// Whether an extractor error is worth trying again.
+///
+/// Deliberately a small allowlist: retrying a video that is genuinely gone wastes
+/// the viewer's time three times over, so only network-shaped failures qualify.
+fn is_transient(message: &str) -> bool {
+    const SIGNS: &[&str] = &[
+        "timed out",
+        "timeout",
+        "connection reset",
+        "connection aborted",
+        "temporary failure",
+        "temporarily unavailable",
+        "too many requests",
+        "http error 5",
+        "read operation",
+        "transporterror",
+        "unable to download",
+    ];
+    let lower = message.to_ascii_lowercase();
+    SIGNS.iter().any(|s| lower.contains(s))
+}
+
+/// The readable part of a yt-dlp failure.
+///
+/// Its errors carry a full Python exception chain — the same message repeated
+/// inside `(caused by ...)`, plus connection-pool internals. Printed verbatim that
+/// buries the one useful clause under several lines of noise.
+fn concise_error(stderr: &str) -> String {
+    let line = stderr
+        .lines()
+        .find(|l| l.contains("ERROR"))
+        .unwrap_or_else(|| stderr.trim());
+
+    let line = line.split(" (caused by").next().unwrap_or(line);
+    let line = line.trim().trim_start_matches("ERROR: ").trim();
+
+    // Collapse the connection-pool detail, which names a host and port already
+    // implied by the request.
+    let cleaned = match line.find("HTTPSConnectionPool") {
+        Some(i) => {
+            let head = line[..i].trim_end().trim_end_matches(':').trim();
+            format!("{head}: the host stopped responding")
+        }
+        None => line.to_string(),
+    };
+
+    const LIMIT: usize = 160;
+    if cleaned.chars().count() > LIMIT {
+        let short: String = cleaned.chars().take(LIMIT).collect();
+        format!("{short}…")
+    } else {
+        cleaned
     }
 }
 
@@ -485,6 +562,41 @@ mod tests {
     fn specific_quality_still_plays_when_only_higher_exists() {
         let ranked = rank_formats(vec![stream(1440), stream(2160)], QualityPref::P1080);
         assert_eq!(heights(&ranked)[0], 1440);
+    }
+
+    #[test]
+    fn network_shaped_failures_are_retried() {
+        assert!(is_transient(
+            "ERROR: Unable to download JSON metadata: Read timed out"
+        ));
+        assert!(is_transient("ERROR: HTTP Error 503: Service Unavailable"));
+        assert!(is_transient("ERROR: Connection reset by peer"));
+        assert!(is_transient("ERROR: Too Many Requests"));
+    }
+
+    #[test]
+    fn a_video_that_is_gone_fails_at_once() {
+        // Retrying these would cost the viewer three waits for the same answer.
+        assert!(!is_transient("ERROR: Video unavailable"));
+        assert!(!is_transient("ERROR: This video is private"));
+        assert!(!is_transient("ERROR: Unsupported URL"));
+    }
+
+    #[test]
+    fn the_exception_chain_is_stripped_from_errors() {
+        let raw = "ERROR: [dailymotion] kAbC: Unable to download JSON metadata:                    HTTPSConnectionPool(host='graphql.api.dailymotion.com', port=443):                    Read timed out. (read timeout=20.0) (caused by TransportError(\"...\"))";
+        let out = concise_error(raw);
+        assert!(!out.contains("caused by"), "{out}");
+        assert!(!out.contains("HTTPSConnectionPool"), "{out}");
+        assert!(out.chars().count() <= 161, "{out}");
+    }
+
+    #[test]
+    fn a_plain_error_survives_intact() {
+        assert_eq!(
+            concise_error("ERROR: Video unavailable"),
+            "Video unavailable"
+        );
     }
 
     #[test]

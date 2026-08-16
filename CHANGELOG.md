@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.6.3
+
+### Fixed
+
+- **One timed-out request no longer retires a mirror.** Hosts rate-limit and their
+  metadata APIs blip; kuro treated any extractor failure as terminal, so a single
+  timeout could make an episode unplayable — worst on providers where a language has
+  only one mirror. Network-shaped failures are now retried with a growing pause,
+  while permanent answers — removed, private, unsupported — still fail immediately.
+- **Extractor errors are readable.** yt-dlp reports a full Python exception chain,
+  which kuro printed verbatim and twice over. The useful clause is kept, the
+  connection-pool internals and duplicated `caused by` tail are dropped, and it is
+  reported once.
+
+
 ## v0.6.2
 
 ### Fixed

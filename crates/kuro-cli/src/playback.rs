@@ -162,8 +162,11 @@ pub async fn play(app: &mut App, req: PlayRequest<'_>) -> Result<Option<f32>> {
         let streams = match result {
             Ok(s) => s,
             Err(e) => {
-                warn!(mirror = %mirror.label, error = %e, "resolution failed");
-                eprintln!("  \x1b[2m{} unavailable\x1b[0m", mirror.label);
+                // Reported once, here. The same text also lands in the final error
+                // if every mirror fails, and a tracing warning on top made it three
+                // copies of one problem.
+                debug!(mirror = %mirror.label, error = %e, "resolution failed");
+                eprintln!("  \x1b[2m{} unavailable — {e}\x1b[0m", mirror.label);
                 failures.push(format!("{}: {e}", mirror.label));
                 continue;
             }
