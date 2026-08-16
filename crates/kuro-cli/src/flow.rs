@@ -293,7 +293,7 @@ fn spawn_quality_probe(
 ) -> tokio::task::JoinHandle<Option<Vec<u32>>> {
     tokio::spawn(async move {
         let mirrors = provider.mirrors(&ctx, &episode).await.ok()?;
-        let resolved = crate::playback::resolve_embeds(&ctx, &provider, mirrors).await;
+        let (resolved, _) = crate::playback::resolve_embeds(&ctx, &provider, mirrors).await;
         let first = resolved.first()?;
         let heights = kuro_resolver::ResolverChain::default()
             .available_heights(&first.embed)

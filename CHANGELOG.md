@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.6.4
+
+### Changed
+
+- **Default quality is now `best`, not 1080p.** Hosts have started serving 4K, and a
+  1080p default silently capped everyone below it — a new install stops short of the
+  quality the site actually offers. `best` takes the top rung; a bandwidth-conscious
+  setup sets an explicit height instead. Existing configs are untouched; edit
+  `default_quality` to opt in.
+- **Default `search_timeout` raised to 12s.** The Odoo-backed provider routinely
+  needs ~8s, so an 8s budget dropped it from results on any slow day.
+- **Dropped mirrors are reported.** When some of an episode's mirrors fail to yield
+  an embed, kuro says "2 of 5 unusable" rather than silently shrinking the list —
+  which had made `-m rumble` look impossible when the host was simply among the ones
+  quietly discarded.
+
+
 ## v0.6.3
 
 ### Fixed

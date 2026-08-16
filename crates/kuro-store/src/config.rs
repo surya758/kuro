@@ -40,9 +40,14 @@ pub struct General {
 impl Default for General {
     fn default() -> Self {
         Self {
-            default_quality: QualityPref::P1080,
+            // A cap, not a demand: `best` takes whatever the host's top rung is,
+            // so 4K plays as 4K without anyone editing a config. Bandwidth-conscious
+            // setups set an explicit height.
+            default_quality: QualityPref::Best,
             concurrency: 6,
-            search_timeout: Duration::from_secs(8),
+            // Odoo-backed providers routinely need ~8s for a search; a budget equal
+            // to that dropped them from results on any slow day.
+            search_timeout: Duration::from_secs(12),
             request_timeout: Duration::from_secs(15),
             cache: true,
             impersonate_command: kuro_core::DEFAULT_IMPERSONATE_COMMAND.to_string(),
@@ -166,7 +171,7 @@ mod tests {
 
         assert_eq!(back.priority("luciferdonghua"), 10);
         assert_eq!(back.provider("luciferdonghua").mirrors, vec!["rumble"]);
-        assert_eq!(back.general.default_quality, QualityPref::P1080);
+        assert_eq!(back.general.default_quality, QualityPref::Best);
     }
 
     #[test]
@@ -174,7 +179,7 @@ mod tests {
         let cfg: Config = toml::from_str("[general]\nconcurrency = 2\n").expect("parses");
         assert_eq!(cfg.general.concurrency, 2);
         // Untouched fields keep their defaults rather than becoming zero values.
-        assert_eq!(cfg.general.default_quality, QualityPref::P1080);
+        assert_eq!(cfg.general.default_quality, QualityPref::Best);
         assert!(cfg.player.resume);
     }
 }

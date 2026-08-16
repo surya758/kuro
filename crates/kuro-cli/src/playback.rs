@@ -26,7 +26,7 @@ pub(crate) async fn resolve_embeds(
     ctx: &kuro_core::FetchCtx,
     provider: &Arc<dyn Provider>,
     mirrors: Vec<Mirror>,
-) -> Vec<ResolvedMirror> {
+) -> (Vec<ResolvedMirror>, Vec<String>) {
     let tasks = mirrors.into_iter().map(|mirror| {
         let provider = Arc::clone(provider);
         let ctx = ctx.clone();
@@ -37,18 +37,28 @@ pub(crate) async fn resolve_embeds(
                         .host_str()
                         .map(hosts::host_label)
                         .unwrap_or_else(|| mirror.label.clone());
-                    Some(ResolvedMirror { label, embed })
+                    Ok(ResolvedMirror { label, embed })
                 }
                 Err(e) => {
                     // A dead mirror is routine; the others still stand a chance.
+                    // Reported to the caller rather than logged, so the play path
+                    // can say "3 of 5 mirrors" instead of silently shrinking.
                     debug!(mirror = mirror.index, error = %e, "mirror embed unavailable");
-                    None
+                    Err(format!("mirror {}: {e}", mirror.index))
                 }
             }
         }
     });
 
-    join_all(tasks).await.into_iter().flatten().collect()
+    let mut resolved = Vec::new();
+    let mut dropped = Vec::new();
+    for outcome in join_all(tasks).await {
+        match outcome {
+            Ok(m) => resolved.push(m),
+            Err(e) => dropped.push(e),
+        }
+    }
+    (resolved, dropped)
 }
 
 /// Order mirrors by the configured host preference, best first.
@@ -114,10 +124,20 @@ pub async fn ordered_mirrors(
     let spinner = show_progress
         .then(|| crate::ui::Spinner::start(format!("Resolving {} mirror(s)…", mirrors.len())));
 
-    let resolved = resolve_embeds(&app.ctx, provider, mirrors).await;
+    let (resolved, dropped) = resolve_embeds(&app.ctx, provider, mirrors).await;
 
     if let Some(spinner) = spinner {
         spinner.clear().await;
+    }
+
+    // Silence here made "no mirror matching `rumble` (1 available)" look like a
+    // provider limitation when the site had five; one dim line explains the gap.
+    if show_progress && !dropped.is_empty() {
+        eprintln!(
+            "  \x1b[2m{} of {} mirror(s) unusable — details with -vv\x1b[0m",
+            dropped.len(),
+            dropped.len() + resolved.len(),
+        );
     }
 
     if resolved.is_empty() {
@@ -294,7 +314,7 @@ fn spawn_lookahead(job: LookaheadJob) -> tokio::task::JoinHandle<Vec<Episode>> {
             let Ok(mirrors) = provider.mirrors(&ctx, &episode).await else {
                 break;
             };
-            let resolved = resolve_embeds(&ctx, &provider, mirrors).await;
+            let (resolved, _) = resolve_embeds(&ctx, &provider, mirrors).await;
             if resolved.is_empty() {
                 break;
             }

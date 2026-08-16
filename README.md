@@ -185,7 +185,7 @@ populated one.
 
 ```toml
 [general]
-default_quality = "1080p"
+default_quality = "best"   # a cap; set a height to limit bandwidth
 concurrency     = 6
 cache           = true
 
