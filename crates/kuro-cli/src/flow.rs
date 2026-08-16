@@ -171,13 +171,42 @@ async fn action_menu(
     episodes: &[Episode],
     index: usize,
 ) -> Result<Step> {
+    // Started once and read on later redraws: the ladder is worth knowing, but not
+    // worth making the viewer wait for before the menu appears.
+    let mut probe = Some(spawn_quality_probe(
+        app.ctx.clone(),
+        Arc::clone(provider),
+        episodes[index].clone(),
+    ));
+    let mut heights: Option<Vec<u32>> = None;
+
     loop {
         let episode = &episodes[index];
+
+        // Take the result the moment it lands, and raise the cap when the host
+        // turns out to offer more than the configured one would reach.
+        if probe.as_ref().is_some_and(|h| h.is_finished()) {
+            if let Some(handle) = probe.take() {
+                heights = handle.await.ok().flatten();
+                if let Some(h) = &heights {
+                    let best = h.iter().max().copied();
+                    if best > delivered(h, app.quality) {
+                        app.quality = QualityPref::Best;
+                    }
+                }
+            }
+        }
+
+        let quality_hint = match heights.as_deref().and_then(|h| delivered(h, app.quality)) {
+            Some(px) => format!("{} · {px}p", quality_label(app.quality)),
+            None => quality_label(app.quality).to_string(),
+        };
+
         let items = vec![
             Item::new("▶  Play"),
             Item::new("⬇  Download this episode"),
             Item::new("⬇  Download a range…"),
-            Item::with_hint("⚙  Max quality", quality_label(app.quality).to_string()),
+            Item::with_hint("⚙  Max quality", quality_hint),
             Item::new("☆  Bookmark series"),
             Item::new("←  Back to episodes"),
         ];
@@ -250,6 +279,28 @@ fn quality_caveat(q: QualityPref) -> Option<&'static str> {
         QualityPref::P2160 | QualityPref::P1440 => Some("rarely available"),
         _ => None,
     }
+}
+
+/// Probe an episode's ladder without blocking the menu.
+///
+/// Runs detached with its own client and resolver so the flow keeps ownership of
+/// `App`; provider health is deliberately not recorded, since a speculative probe
+/// should never mark a provider unhealthy.
+fn spawn_quality_probe(
+    ctx: kuro_core::FetchCtx,
+    provider: Arc<dyn Provider>,
+    episode: Episode,
+) -> tokio::task::JoinHandle<Option<Vec<u32>>> {
+    tokio::spawn(async move {
+        let mirrors = provider.mirrors(&ctx, &episode).await.ok()?;
+        let resolved = crate::playback::resolve_embeds(&ctx, &provider, mirrors).await;
+        let first = resolved.first()?;
+        let heights = kuro_resolver::ResolverChain::default()
+            .available_heights(&first.embed)
+            .await
+            .ok()?;
+        (!heights.is_empty()).then_some(heights)
+    })
 }
 
 /// What `pref` would actually deliver from a host offering `heights`.

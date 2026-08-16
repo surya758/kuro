@@ -22,7 +22,7 @@ pub struct ResolvedMirror {
 }
 
 /// Resolve every mirror's embed URL concurrently, discarding ones that fail.
-async fn resolve_embeds(
+pub(crate) async fn resolve_embeds(
     ctx: &kuro_core::FetchCtx,
     provider: &Arc<dyn Provider>,
     mirrors: Vec<Mirror>,
@@ -631,7 +631,19 @@ async fn launch(
     // running, the launcher never returns, and waiting on it alone hangs forever.
     // Whichever happens first means this episode is done.
     tokio::select! {
-        _ = handle.wait() => {}
+        // A player that fails to open exits at once, which is otherwise
+        // indistinguishable from one the viewer closed — the flow just jumps
+        // straight to the post-playback menu with nothing said.
+        result = handle.wait() => {
+            if let Err(e) = result {
+                eprintln!(
+                    "{}  {} exited immediately: {e}",
+                    crate::ui::style::accent("⚠"),
+                    player.name()
+                );
+                eprintln!("   \x1b[2mrun with -v to see the command, or --dry-run to inspect it\x1b[0m");
+            }
+        }
         _ = player_gone.notified() => debug!("player window closed"),
     }
 

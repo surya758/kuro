@@ -30,6 +30,11 @@ struct YtDlpOutput {
     url: Option<String>,
     #[serde(default)]
     duration: Option<f64>,
+    /// Which extractor matched, used to rebuild a canonical URL for the player.
+    #[serde(default)]
+    extractor: Option<String>,
+    #[serde(default)]
+    id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -243,6 +248,22 @@ impl YtDlpResolver {
     }
 }
 
+/// A URL the *player's* extractor will recognise.
+///
+/// Embed URLs resolve fine for yt-dlp but not always for the hook inside a player:
+/// mpv fetches a Dailymotion player page, finds an SVG, and exits with no video.
+/// The canonical page for the same video is what it accepts. Hosts not known to
+/// need rewriting are passed through untouched.
+fn canonical_for_player(output: &YtDlpOutput, original: &Url) -> Url {
+    match (output.extractor.as_deref(), output.id.as_deref()) {
+        (Some("dailymotion"), Some(id)) => {
+            Url::parse(&format!("https://www.dailymotion.com/video/{id}"))
+                .unwrap_or_else(|_| original.clone())
+        }
+        _ => original.clone(),
+    }
+}
+
 /// A yt-dlp format expression for the requested quality.
 ///
 /// Each falls back to a pre-muxed stream (`/b`) because many of these hosts serve
@@ -348,7 +369,7 @@ impl StreamResolver for YtDlpResolver {
         if streams.is_empty() && output.formats.iter().any(|f| f.has_video()) {
             debug!(%url, "no muxed format; deferring resolution to the player");
             streams.push(Stream {
-                url: url.clone(),
+                url: canonical_for_player(&output, url),
                 kind: StreamKind::Hls,
                 // Unknown until the player resolves it; guessing would misreport
                 // what actually plays.

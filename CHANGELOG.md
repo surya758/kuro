@@ -1,5 +1,28 @@
 # Changelog
 
+## v0.6.2
+
+### Fixed
+
+- **Some episodes jumped straight to the "Finished" menu without playing.** When a
+  host publishes no muxed rendition, kuro hands the page URL to the player to
+  resolve — but it passed the *embed* URL, which a player's extractor does not
+  recognise. mpv fetched the player page, found an image, and exited at once. The
+  canonical page for the video is now handed over instead. Affected any provider
+  once its host started serving separate video and audio tracks, which is why
+  episodes that used to work stopped.
+- **A player that failed to start said nothing.** Its exit status was discarded, so
+  an immediate failure looked identical to closing the window yourself. kuro now
+  reports it.
+
+### Changed
+
+- **Opening an episode probes its quality ladder in the background** and raises the
+  cap when the host offers more than the configured one would reach, showing the
+  height it will actually play. The menu appears immediately; the probe never blocks
+  it, and never counts against provider health.
+
+
 ## v0.6.1
 
 ### Added
