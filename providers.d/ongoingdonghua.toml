@@ -22,7 +22,10 @@ series = "/{slug}"
 # Odoo searches the whole site, so results mix three things: series pages, their
 # episode pages, and ordinary pages like the catalogue. Only the first are series.
 item      = 'a.dropdown-item:not([href*="-episode-"]):not([href="/donghua-list"]):not([href="/movies-ovas"]):not([href="/contactus"])'
-container = "div.oe_website_search"
+# Present on both the results page and Odoo's "did not match anything" page, so an
+# empty search reads as "no matches" rather than a markup change. The results
+# wrapper itself is absent on the no-results page, which would misfire.
+container = ".oe_search_found"
 title     = "div.h6"
 # No `url`: the result *is* the anchor.
 

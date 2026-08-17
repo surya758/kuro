@@ -14,8 +14,11 @@ use cli::{Cli, Command};
 use tracing_subscriber::EnvFilter;
 
 fn init_tracing(verbose: u8) {
+    // Silent by default: warnings and errors are printed as user-facing lines
+    // (the `⚠`/`error:` messages), so emitting the structured tracing form on top
+    // is just the same problem twice. `-v` opts into the diagnostic log.
     let default = match verbose {
-        0 => "warn",
+        0 => "off",
         1 => "info",
         2 => "debug",
         _ => "trace",

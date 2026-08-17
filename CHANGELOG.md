@@ -1,5 +1,22 @@
 # Changelog
 
+## v0.6.5
+
+### Fixed
+
+- **A search that found nothing on ongoingdonghua reported a broken scraper.** Odoo
+  returns a smaller "did not match anything" page for an empty search, and it lacks
+  the results wrapper the provider keyed on — so a genuine no-results was flagged as
+  a markup change and counted against the provider's health. It now keys on an
+  element present whether or not there are matches.
+
+### Changed
+
+- **Quiet by default.** Warnings and errors already print as `⚠`/`error:` lines, so
+  the structured `tracing` log on top was the same message twice. The diagnostic log
+  is now silent unless `-v` is passed (or `RUST_LOG` is set).
+
+
 ## v0.6.4
 
 ### Changed
