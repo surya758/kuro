@@ -4,6 +4,7 @@
 //! *what* a provider is and orchestrates calls across many of them; the scraping,
 //! stream resolution, and playback layers depend on this crate, never the reverse.
 
+pub mod airing;
 pub mod cache;
 pub mod error;
 pub mod external;
@@ -13,6 +14,7 @@ pub mod provider;
 pub mod skip;
 pub mod types;
 
+pub use airing::{AiredEpisode, Schedule};
 pub use cache::HttpCache;
 pub use error::{PlayerError, ProviderError, ResolveError};
 pub use external::{ExternalFetcher, DEFAULT_IMPERSONATE_COMMAND};

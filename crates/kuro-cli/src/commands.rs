@@ -640,6 +640,32 @@ fn series_from_bookmark(bookmark: &Bookmark) -> Result<Series> {
     })
 }
 
+/// One line describing why a series counts as new, and which episode to play.
+///
+/// The episode shown is always the provider's, because that is the one the viewer
+/// can actually watch; broadcast numbering is per-season and often disagrees.
+fn describe_freshness(
+    freshness: kuro_store::Freshness,
+    provider_episode: Option<f32>,
+    now: chrono::DateTime<chrono::Utc>,
+) -> String {
+    use kuro_store::Freshness;
+
+    let episode = provider_episode
+        .map(|e| format!("up to ep {} · ", fmt_episode(e)))
+        .unwrap_or_default();
+    let age = humanise_age(now.signed_duration_since(freshness.at()));
+
+    match freshness {
+        Freshness::Aired { .. } => format!("\x1b[32mnew episode\x1b[0m · {episode}aired {age}"),
+        // Hedged wording on purpose: with no schedule, all kuro knows is when it
+        // noticed, which can lag the actual release.
+        Freshness::Seen { count, .. } => {
+            format!("\x1b[32m{count} new\x1b[0m · {episode}seen {age}")
+        }
+    }
+}
+
 /// "3 days ago" / "just now" — enough precision for a weekly release schedule.
 fn humanise_age(age: chrono::Duration) -> String {
     let days = age.num_days();
@@ -675,15 +701,10 @@ pub async fn bookmark(app: &mut App, action: &BookmarkAction) -> Result<()> {
                 for b in &bookmarks.entries {
                     // The badge is read from the stored snapshot, so `list` stays
                     // an offline command; `check` is what goes to the network.
-                    let badge = match b
-                        .new_age(now)
-                        .filter(|_| b.has_new_within(kuro_store::DEFAULT_NEW_WINDOW_DAYS, now))
-                    {
-                        Some(age) => format!(
-                            "  \x1b[32m★ {} new · ep {} · {}\x1b[0m",
-                            b.new_episodes,
-                            b.last_episode.map(fmt_episode).unwrap_or_default(),
-                            humanise_age(age)
+                    let badge = match b.freshness(kuro_store::DEFAULT_NEW_WINDOW_DAYS, now) {
+                        Some(freshness) => format!(
+                            "  \x1b[32m★\x1b[0m {}",
+                            describe_freshness(freshness, b.last_episode, now)
                         ),
                         None => String::new(),
                     };
@@ -732,19 +753,113 @@ pub async fn bookmark(app: &mut App, action: &BookmarkAction) -> Result<()> {
                 chosen.url.to_string(),
             ));
 
-            if added {
-                bookmarks.save(&app.paths)?;
-                println!("Bookmarked {}.", chosen.title);
-            } else {
+            if !added {
                 println!("{} is already bookmarked.", chosen.title);
+                return Ok(());
             }
+
+            bookmarks.save(&app.paths)?;
+            println!("Bookmarked {}.", chosen.title);
+            seed_baseline(app, &mut bookmarks, chosen).await;
         }
     }
     Ok(())
 }
 
+/// Fetch a broadcast schedule for a followed series, preferring a cached id.
+///
+/// Best-effort by design: series with no schedule — donghua, mostly — simply fall
+/// back to the seen-it-appear snapshot.
+async fn lookup_schedule(
+    ctx: &kuro_core::FetchCtx,
+    bookmark: &kuro_store::Bookmark,
+) -> Option<kuro_core::Schedule> {
+    match bookmark.mal_id {
+        Some(id) => kuro_core::airing::lookup_by_mal_id(ctx, id).await,
+        None => kuro_core::airing::lookup_by_title(ctx, &bookmark.series_title).await,
+    }
+}
+
+/// Record the current episode list as the starting point for release tracking.
+///
+/// Doing this when the series is followed — rather than at the first
+/// `bookmark check` — is what stops episodes that air in between from being
+/// silently absorbed into the baseline. Best-effort: a provider that will not
+/// answer leaves the bookmark unseeded, and the next check baselines it instead.
+async fn seed_baseline(app: &mut App, bookmarks: &mut Bookmarks, series: &Series) {
+    let episodes = match provider_for(app, series) {
+        Ok(provider) => episodes_of(app, &provider, series).await,
+        Err(e) => Err(e),
+    };
+
+    let numbers: Vec<f32> = match episodes {
+        Ok(eps) => eps.iter().map(|e| e.number).collect(),
+        Err(e) => {
+            eprintln!(
+                "⚠  could not read the episode list to start tracking: {e}\n   \
+                 `kuro bookmark check` will start it on the next run."
+            );
+            return;
+        }
+    };
+
+    let outcome = bookmarks.record_check(
+        series.provider_id.as_str(),
+        &series.id,
+        &numbers,
+        chrono::Utc::now(),
+    );
+
+    // A broadcast schedule, where one exists, means this series never has to wait
+    // for a second check to say something useful.
+    let now = chrono::Utc::now();
+    let aired = match kuro_core::airing::lookup_by_title(&app.ctx, &series.title).await {
+        Some(schedule) => {
+            let last = schedule.last_aired(now.timestamp()).and_then(|e| {
+                chrono::DateTime::from_timestamp(e.airing_at, 0).map(|at| (e.episode, at))
+            });
+            bookmarks.record_schedule(
+                series.provider_id.as_str(),
+                &series.id,
+                schedule.mal_id,
+                last,
+            );
+            last.map(|(_, at)| at)
+        }
+        None => None,
+    };
+
+    if bookmarks.save(&app.paths).is_err() {
+        return;
+    }
+
+    match aired {
+        Some(at) => println!(
+            "{}",
+            crate::ui::dim_stdout(format!(
+                "Latest episode aired {}.",
+                humanise_age(now.signed_duration_since(at))
+            ))
+        ),
+        None => {
+            if let Some(kuro_store::CheckOutcome::Baseline {
+                latest: Some(latest),
+            }) = outcome
+            {
+                println!(
+                    "{}",
+                    crate::ui::dim_stdout(format!(
+                        "Tracking from episode {} — `kuro bookmark check` reports anything newer.",
+                        fmt_episode(latest)
+                    ))
+                );
+            }
+        }
+    }
+}
+
 /// Renders an episode number without a trailing `.0` for whole numbers.
-fn fmt_episode(number: f32) -> String {
+pub(crate) fn fmt_episode(number: f32) -> String {
     if number.fract().abs() < f32::EPSILON {
         format!("{}", number as i64)
     } else {
@@ -815,6 +930,7 @@ async fn bookmark_check(
     let tasks = fetchable.into_iter().map(|(bookmark, provider, series)| {
         let limiter = Arc::clone(&limiter);
         let ctx = app.ctx.clone();
+        let schedule_ctx = app.ctx.clone();
 
         async move {
             let _permit = limiter.acquire().await.expect("semaphore is never closed");
@@ -823,7 +939,12 @@ async fn bookmark_check(
                 provider.episodes(&ctx, &series).await
             })
             .await;
-            (bookmark, outcome)
+
+            // Runs even when the provider fetch failed: a broadcast date is a fact
+            // about the series, not about the provider, and is worth having either
+            // way. Failure is silent — this is enrichment, not the point of the run.
+            let schedule = lookup_schedule(&schedule_ctx, &bookmark).await;
+            (bookmark, outcome, schedule)
         }
     });
 
@@ -832,7 +953,19 @@ async fn bookmark_check(
     // One instant for the whole run, so "new" ages are comparable across series.
     let now = chrono::Utc::now();
 
-    for (bookmark, fetch) in fetched {
+    for (bookmark, fetch, schedule) in fetched {
+        if let Some(schedule) = schedule {
+            let last_aired = schedule.last_aired(now.timestamp()).and_then(|e| {
+                chrono::DateTime::from_timestamp(e.airing_at, 0).map(|at| (e.episode, at))
+            });
+            bookmarks.record_schedule(
+                &bookmark.provider_id,
+                &bookmark.series_id,
+                schedule.mal_id,
+                last_aired,
+            );
+        }
+
         let outcome = match fetch.result {
             Ok(episodes) => {
                 app.note_success(&fetch.provider_id);
@@ -879,6 +1012,8 @@ fn print_check_report(
     use kuro_store::CheckOutcome;
 
     let mut fresh = 0;
+    let mut baselined = 0;
+    let mut compared = 0;
     println!();
 
     for report in reports {
@@ -888,11 +1023,13 @@ fn print_check_report(
             .entries
             .iter()
             .find(|b| b.provider_id == report.provider_id && b.series_id == report.series_id)
-            .filter(|b| b.has_new_within(within, now))
-            .and_then(|b| {
-                b.new_age(now)
-                    .map(|age| (b.new_episodes, b.last_episode, age))
-            });
+            .and_then(|b| b.freshness(within, now).map(|f| (f, b.last_episode)));
+
+        let has_schedule = bookmarks.entries.iter().any(|b| {
+            b.provider_id == report.provider_id
+                && b.series_id == report.series_id
+                && b.last_aired_at.is_some()
+        });
 
         match (&report.outcome, recent) {
             (Err(e), _) => {
@@ -902,43 +1039,65 @@ fn print_check_report(
                     crate::ui::dim_stdout(e)
                 );
             }
-            (Ok(_), Some((count, latest, age))) => {
+            (Ok(_), Some((freshness, latest))) => {
                 fresh += 1;
                 println!(
-                    "\x1b[32m★\x1b[0m  {}  \x1b[32m{count} new\x1b[0m · up to ep {} · {}",
+                    "\x1b[32m★\x1b[0m  {}  {}",
                     report.title,
-                    latest.map(fmt_episode).unwrap_or_else(|| "?".to_string()),
-                    humanise_age(age)
+                    describe_freshness(freshness, latest, now)
                 );
             }
-            (Ok(CheckOutcome::Baseline { latest }), None) if all => println!(
-                "·  {}  {}",
-                report.title,
-                crate::ui::dim_stdout(format!(
-                    "now tracking from ep {}",
-                    latest
-                        .map(fmt_episode)
-                        .unwrap_or_else(|| "none".to_string())
-                ))
-            ),
-            (Ok(_), None) if all => println!(
-                "·  {}  {}",
-                report.title,
-                crate::ui::dim_stdout("nothing new")
-            ),
-            _ => {}
+            // Always shown, never gated behind `--all`: a silent baseline is
+            // indistinguishable from "nothing aired", which is the one thing this
+            // report must never leave ambiguous.
+            // Only when there is no schedule: a series with broadcast dates is
+            // never "waiting for a baseline", it simply has nothing recent.
+            (Ok(CheckOutcome::Baseline { latest }), None) if !has_schedule => {
+                baselined += 1;
+                println!(
+                    "◦  {}  {}",
+                    report.title,
+                    crate::ui::dim_stdout(format!(
+                        "now tracking from ep {} — anything newer is reported from here",
+                        latest
+                            .map(fmt_episode)
+                            .unwrap_or_else(|| "none yet".to_string())
+                    ))
+                );
+            }
+            (Ok(_), None) => {
+                compared += 1;
+                if all {
+                    println!(
+                        "·  {}  {}",
+                        report.title,
+                        crate::ui::dim_stdout("nothing new")
+                    );
+                }
+            }
         }
     }
 
-    if fresh == 0 {
+    if fresh > 0 {
+        println!(
+            "\n{fresh} series with new episodes. Watch one with `kuro next` or `kuro watch <title>`."
+        );
+    } else if compared > 0 {
         println!(
             "No new episodes in the last {within} day{}.",
             if within == 1 { "" } else { "s" }
         );
-    } else {
-        println!(
-            "\n{fresh} series with new episodes. Watch one with `kuro next` or `kuro watch <title>`."
-        );
+    }
+
+    // Reported separately, and last: a run that only established baselines has
+    // not compared anything yet, so calling that "nothing new" would be a lie.
+    if baselined > 0 {
+        let subject = if baselined == 1 {
+            "1 series is".to_string()
+        } else {
+            format!("{baselined} series are")
+        };
+        println!("{subject} newly tracked — run this again later to see what airs.");
     }
 }
 

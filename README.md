@@ -99,12 +99,14 @@ kuro provider | config | cache | doctor
 Add `--skip` to jump openings and endings, where [AniSkip] has data — coverage is
 crowd-sourced and thin for donghua, so kuro says when there is nothing to skip.
 
-`bookmark check` re-fetches every followed series and reports what appeared since
-the last run; `bookmark list` shows the same ★ badge from the stored snapshot
-without touching the network. Providers publish no air dates, so the first check of
-a series records a baseline rather than announcing its whole back catalogue — from
-then on, "new" means kuro watched it show up. `--within <DAYS>` (default 7) sets how
-long that stays news.
+`bookmark check` reports what has come out on the series you follow; `bookmark list`
+shows the same ★ badge offline. Streaming providers publish no air dates, so kuro
+asks AniList for a broadcast schedule — where one exists, recency is a fact
+(`aired 4 days ago`) and works from the moment you follow a series. Coverage is
+anime-shaped: donghua rarely have a schedule, and those fall back to watching the
+episode list grow between checks, reported as `seen` rather than `aired`. That
+fallback baselines on the first sighting rather than announcing a whole back
+catalogue. `--within <DAYS>` (default 7) sets how long something stays news.
 
 Global flags: `--provider`, `--quality <best|1080p|720p|…>` (a cap: the closest rung
 at or below it plays), `-S N` to take the Nth result, `--json`, `--dry-run`,

@@ -1,5 +1,32 @@
 # Changelog
 
+## v0.6.7
+
+### Added
+
+- **Bookmarked series now report real broadcast dates.** `kuro bookmark check` asks
+  AniList for a series' airing schedule, so "came out recently" is a fact about the
+  series rather than an inference from kuro's own history with it — a freshly
+  followed show reports `aired 4 days ago` on the very first check instead of
+  waiting a week to notice anything. The MyAnimeList id is cached on the bookmark so
+  later lookups key on an id rather than a title a provider might rename. Coverage
+  is anime-shaped, as AniList schedules donghua thinly; those fall back to the
+  episode-list snapshot and are reported as `seen` rather than `aired`, which is the
+  honest distinction between when something aired and when kuro noticed.
+
+### Fixed
+
+- **Following a series no longer swallows everything that airs before the first
+  check.** The baseline is now recorded when a bookmark is added, not at the first
+  `bookmark check`, so episodes released in between are reported instead of being
+  absorbed into the starting point. In the interactive flow this costs no extra
+  request — the episode list is already on screen.
+- **A first check no longer reports "no new episodes".** Establishing a baseline was
+  silent unless `--all` was passed, so a newly followed series was indistinguishable
+  from one where nothing had aired. Baselines are always shown, and the summary says
+  a series is newly tracked rather than claiming nothing came out.
+
+
 ## v0.6.6
 
 ### Added

@@ -248,7 +248,7 @@ async fn action_menu(
                 }
             }
             3 => app.quality = pick_quality(app, provider, episode, app.quality).await?,
-            4 => bookmark(app, series)?,
+            4 => bookmark(app, series, episodes)?,
             _ => return Ok(Step::Back),
         }
     }
@@ -444,7 +444,7 @@ fn prompt_range(episodes: &[Episode]) -> Result<Option<Vec<Episode>>> {
     Ok(Some(picked))
 }
 
-fn bookmark(app: &App, series: &Series) -> Result<()> {
+fn bookmark(app: &App, series: &Series, episodes: &[Episode]) -> Result<()> {
     let mut bookmarks = Bookmarks::load(&app.paths).context("loading bookmarks")?;
     let added = bookmarks.add(Bookmark::new(
         series.provider_id.to_string(),
@@ -453,11 +453,36 @@ fn bookmark(app: &App, series: &Series) -> Result<()> {
         series.url.to_string(),
     ));
 
-    if added {
-        bookmarks.save(&app.paths)?;
-        eprintln!("☆ Bookmarked {}.", series.title);
-    } else {
+    if !added {
         eprintln!("{} is already bookmarked.", series.title);
+        return Ok(());
+    }
+
+    // The episode list is already on screen, so following a series starts its
+    // release tracking here rather than at the first `bookmark check` — anything
+    // that airs from now on is news, and nothing already listed is.
+    let numbers: Vec<f32> = episodes.iter().map(|e| e.number).collect();
+    let latest = match bookmarks.record_check(
+        &series.provider_id.to_string(),
+        &series.id,
+        &numbers,
+        chrono::Utc::now(),
+    ) {
+        Some(kuro_store::CheckOutcome::Baseline { latest }) => latest,
+        _ => None,
+    };
+
+    bookmarks.save(&app.paths)?;
+
+    eprintln!("☆ Bookmarked {}.", series.title);
+    if let Some(latest) = latest {
+        eprintln!(
+            "   {}",
+            crate::ui::dim_stdout(format!(
+                "tracking from episode {} — `kuro bookmark check` reports anything newer",
+                crate::commands::fmt_episode(latest)
+            ))
+        );
     }
     Ok(())
 }

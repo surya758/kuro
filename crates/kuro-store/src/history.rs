@@ -163,6 +163,42 @@ pub struct Bookmark {
     /// Episodes that arrived in the check that set [`Bookmark::new_since`].
     #[serde(default)]
     pub new_episodes: u32,
+
+    // Broadcast schedule, when one exists. This is the real answer to "did an
+    // episode come out recently", so it outranks the seen-it-appear snapshot
+    // above wherever it is available — see [`Bookmark::freshness`].
+    /// Cached MyAnimeList id, so later lookups key on an id rather than a title
+    /// the provider might rename.
+    #[serde(default)]
+    pub mal_id: Option<u32>,
+    /// Broadcast time of the newest episode known to have aired.
+    #[serde(default)]
+    pub last_aired_at: Option<DateTime<Utc>>,
+    /// That episode's number *in broadcast numbering*, which is per-season and so
+    /// need not match the provider's — anidb numbers Slime season four 73–90 where
+    /// the schedule numbers it 1–18. Kept for display only; never compared against
+    /// [`Bookmark::last_episode`].
+    #[serde(default)]
+    pub last_aired_episode: Option<u32>,
+}
+
+/// Why a series counts as having something new.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Freshness {
+    /// A broadcast date says so. Trustworthy the moment a series is followed,
+    /// with no need to have watched its episode list change.
+    Aired { episode: u32, at: DateTime<Utc> },
+    /// No schedule exists, so this rests on kuro having watched the episode list
+    /// grow between two checks.
+    Seen { count: u32, at: DateTime<Utc> },
+}
+
+impl Freshness {
+    pub fn at(&self) -> DateTime<Utc> {
+        match self {
+            Self::Aired { at, .. } | Self::Seen { at, .. } => *at,
+        }
+    }
 }
 
 impl Bookmark {
@@ -183,6 +219,9 @@ impl Bookmark {
             last_checked_at: None,
             new_since: None,
             new_episodes: 0,
+            mal_id: None,
+            last_aired_at: None,
+            last_aired_episode: None,
         }
     }
 
@@ -194,12 +233,30 @@ impl Bookmark {
 
     /// Whether the newest episode arrived within the last `days` days.
     pub fn has_new_within(&self, days: i64, now: DateTime<Utc>) -> bool {
-        match self.new_age(now) {
-            // A clock that jumped backwards shouldn't hide a fresh episode, so a
-            // negative age still counts as new.
-            Some(age) => age < chrono::Duration::days(days.max(0)),
-            None => false,
+        self.freshness(days, now).is_some()
+    }
+
+    /// What counts as new for this series, and on what evidence.
+    ///
+    /// A broadcast date is preferred wherever one exists: it is a fact about the
+    /// series rather than an observation about kuro's own history with it, so it
+    /// works on the very first check. The snapshot is the fallback for everything
+    /// with no schedule — which in practice means donghua.
+    pub fn freshness(&self, days: i64, now: DateTime<Utc>) -> Option<Freshness> {
+        let window = chrono::Duration::days(days.max(0));
+
+        if let (Some(at), Some(episode)) = (self.last_aired_at, self.last_aired_episode) {
+            // A clock that jumped backwards must not hide a fresh episode, so a
+            // negative age still counts as recent.
+            return (now.signed_duration_since(at) < window)
+                .then_some(Freshness::Aired { episode, at });
         }
+
+        let at = self.new_since?;
+        (now.signed_duration_since(at) < window).then_some(Freshness::Seen {
+            count: self.new_episodes,
+            at,
+        })
     }
 }
 
@@ -310,6 +367,34 @@ impl Bookmarks {
         };
 
         Some(outcome)
+    }
+
+    /// Store what a broadcast-schedule lookup found.
+    ///
+    /// `last_aired` of `None` means the series has no schedule — common for
+    /// donghua — and leaves the snapshot fields as the only evidence of newness.
+    pub fn record_schedule(
+        &mut self,
+        provider_id: &str,
+        series_id: &str,
+        mal_id: Option<u32>,
+        last_aired: Option<(u32, DateTime<Utc>)>,
+    ) -> bool {
+        let Some(bookmark) = self.find_mut(provider_id, series_id) else {
+            return false;
+        };
+
+        // Never clear a known id: a lookup that fails this run should not undo a
+        // successful one from an earlier run.
+        if mal_id.is_some() {
+            bookmark.mal_id = mal_id;
+        }
+
+        if let Some((episode, at)) = last_aired {
+            bookmark.last_aired_episode = Some(episode);
+            bookmark.last_aired_at = Some(at);
+        }
+        true
     }
 
     /// Bookmarks whose newest episode arrived within the last `days` days,
@@ -494,6 +579,64 @@ mod tests {
             b.record_check("p", "s", &[1.0], Utc::now()),
             Some(CheckOutcome::Baseline { latest: Some(1.0) })
         );
+    }
+
+    #[test]
+    fn a_broadcast_date_makes_a_series_fresh_without_any_snapshot_history() {
+        let mut b = bookmarked();
+        // Followed today, checked once: the snapshot alone knows nothing yet.
+        b.record_check("p", "s", &[73.0, 90.0], Utc::now());
+        assert!(b.entries[0].new_since.is_none());
+
+        let aired = Utc::now() - chrono::Duration::days(4);
+        assert!(b.record_schedule("p", "s", Some(59970), Some((18, aired))));
+
+        // This is the case that used to report nothing at all.
+        assert_eq!(
+            b.entries[0].freshness(DEFAULT_NEW_WINDOW_DAYS, Utc::now()),
+            Some(Freshness::Aired {
+                episode: 18,
+                at: aired
+            })
+        );
+    }
+
+    #[test]
+    fn a_broadcast_date_outranks_the_snapshot() {
+        let mut b = bookmarked();
+        b.record_check("p", "s", &[1.0], Utc::now());
+        // kuro saw an episode appear just now...
+        b.record_check("p", "s", &[1.0, 2.0], Utc::now());
+        // ...but the schedule says it actually aired a month ago.
+        let aired = Utc::now() - chrono::Duration::days(30);
+        b.record_schedule("p", "s", None, Some((2, aired)));
+
+        assert_eq!(
+            b.entries[0].freshness(DEFAULT_NEW_WINDOW_DAYS, Utc::now()),
+            None
+        );
+    }
+
+    #[test]
+    fn a_series_with_no_schedule_still_falls_back_to_the_snapshot() {
+        let mut b = bookmarked();
+        b.record_check("p", "s", &[1.0], Utc::now());
+        b.record_check("p", "s", &[1.0, 2.0], Utc::now());
+        // A donghua: an id may resolve, but no broadcast dates exist.
+        b.record_schedule("p", "s", Some(123), None);
+
+        assert!(matches!(
+            b.entries[0].freshness(DEFAULT_NEW_WINDOW_DAYS, Utc::now()),
+            Some(Freshness::Seen { count: 1, .. })
+        ));
+    }
+
+    #[test]
+    fn a_failed_lookup_never_clears_a_known_id() {
+        let mut b = bookmarked();
+        b.record_schedule("p", "s", Some(59970), None);
+        b.record_schedule("p", "s", None, None);
+        assert_eq!(b.entries[0].mal_id, Some(59970));
     }
 
     #[test]
