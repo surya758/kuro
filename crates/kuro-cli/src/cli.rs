@@ -225,9 +225,25 @@ pub enum Command {
 
 #[derive(Subcommand, Debug)]
 pub enum BookmarkAction {
-    Add { query: String },
-    Rm { series_id: String },
+    Add {
+        query: String,
+    },
+    Rm {
+        series_id: String,
+    },
+    /// List followed series, flagging any with a recently released episode.
     List,
+    /// Re-fetch every bookmarked series and report episodes released since the
+    /// last check.
+    Check {
+        /// How many days count as "recent".
+        #[arg(long, default_value_t = kuro_store::DEFAULT_NEW_WINDOW_DAYS, value_name = "DAYS")]
+        within: i64,
+
+        /// Show every bookmark, not just the ones with something new.
+        #[arg(long)]
+        all: bool,
+    },
 }
 
 #[derive(Subcommand, Debug)]

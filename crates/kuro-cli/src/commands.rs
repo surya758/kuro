@@ -103,8 +103,12 @@ fn episodes_for_spec(episodes: &[Episode], spec: EpisodeSpec) -> Result<Vec<&Epi
 }
 
 pub(crate) fn provider_for(app: &App, series: &Series) -> Result<Arc<dyn Provider>> {
-    app.provider(series.provider_id.as_str())
-        .with_context(|| format!("provider `{}` is not loaded", series.provider_id))
+    provider_for_id(app, series.provider_id.as_str())
+}
+
+fn provider_for_id(app: &App, id: &str) -> Result<Arc<dyn Provider>> {
+    app.provider(id)
+        .with_context(|| format!("provider `{id}` is not loaded"))
 }
 
 fn print_series_list(series: &[Series]) {
@@ -613,20 +617,93 @@ pub fn history(app: &App, limit: usize, clear: bool) -> Result<()> {
     Ok(())
 }
 
+/// Rebuild a minimal [`Series`] from a bookmark so its episodes can be refetched.
+fn series_from_bookmark(bookmark: &Bookmark) -> Result<Series> {
+    let url = Url::parse(&bookmark.url).with_context(|| {
+        format!(
+            "bookmark for `{}` has no usable series URL — re-add it with `kuro bookmark add`",
+            bookmark.series_title
+        )
+    })?;
+
+    Ok(Series {
+        provider_id: bookmark.provider_id.as_str().into(),
+        id: bookmark.series_id.clone(),
+        title: bookmark.series_title.clone(),
+        url,
+        poster: None,
+        year: None,
+        synopsis: None,
+        genres: Vec::new(),
+        status: SeriesStatus::Unknown,
+        total_episodes: None,
+    })
+}
+
+/// "3 days ago" / "just now" — enough precision for a weekly release schedule.
+fn humanise_age(age: chrono::Duration) -> String {
+    let days = age.num_days();
+    let hours = age.num_hours();
+    if days >= 2 {
+        format!("{days} days ago")
+    } else if days == 1 {
+        "yesterday".to_string()
+    } else if hours >= 1 {
+        format!("{hours}h ago")
+    } else {
+        "just now".to_string()
+    }
+}
+
 pub async fn bookmark(app: &mut App, action: &BookmarkAction) -> Result<()> {
     let mut bookmarks = Bookmarks::load(&app.paths).context("loading bookmarks")?;
 
     match action {
+        BookmarkAction::Check { within, all } => {
+            return bookmark_check(app, &mut bookmarks, *within, *all).await;
+        }
+
         BookmarkAction::List => {
             if app.json {
                 println!("{}", serde_json::to_string_pretty(&bookmarks.entries)?);
             } else if bookmarks.entries.is_empty() {
                 println!("No bookmarks.");
             } else {
+                let now = chrono::Utc::now();
+                let mut unchecked = 0;
+
                 for b in &bookmarks.entries {
+                    // The badge is read from the stored snapshot, so `list` stays
+                    // an offline command; `check` is what goes to the network.
+                    let badge = match b
+                        .new_age(now)
+                        .filter(|_| b.has_new_within(kuro_store::DEFAULT_NEW_WINDOW_DAYS, now))
+                    {
+                        Some(age) => format!(
+                            "  \x1b[32m★ {} new · ep {} · {}\x1b[0m",
+                            b.new_episodes,
+                            b.last_episode.map(fmt_episode).unwrap_or_default(),
+                            humanise_age(age)
+                        ),
+                        None => String::new(),
+                    };
+
+                    if b.last_checked_at.is_none() {
+                        unchecked += 1;
+                    }
+
                     println!(
-                        "{}  \x1b[2m[{}] {}\x1b[0m",
-                        b.series_title, b.provider_id, b.series_id
+                        "{}  \x1b[2m[{}] {}\x1b[0m{}",
+                        b.series_title, b.provider_id, b.series_id, badge
+                    );
+                }
+
+                if unchecked > 0 {
+                    eprintln!(
+                        "\n{}",
+                        crate::ui::dim_stdout(format!(
+                            "{unchecked} bookmark(s) never checked — run `kuro bookmark check`"
+                        ))
                     );
                 }
             }
@@ -648,13 +725,12 @@ pub async fn bookmark(app: &mut App, action: &BookmarkAction) -> Result<()> {
                 .first()
                 .with_context(|| format!("no results for `{query}`"))?;
 
-            let added = bookmarks.add(Bookmark {
-                provider_id: chosen.provider_id.to_string(),
-                series_id: chosen.id.clone(),
-                series_title: chosen.title.clone(),
-                url: chosen.url.to_string(),
-                added_at: chrono::Utc::now(),
-            });
+            let added = bookmarks.add(Bookmark::new(
+                chosen.provider_id.to_string(),
+                chosen.id.clone(),
+                chosen.title.clone(),
+                chosen.url.to_string(),
+            ));
 
             if added {
                 bookmarks.save(&app.paths)?;
@@ -665,6 +741,205 @@ pub async fn bookmark(app: &mut App, action: &BookmarkAction) -> Result<()> {
         }
     }
     Ok(())
+}
+
+/// Renders an episode number without a trailing `.0` for whole numbers.
+fn fmt_episode(number: f32) -> String {
+    if number.fract().abs() < f32::EPSILON {
+        format!("{}", number as i64)
+    } else {
+        format!("{number}")
+    }
+}
+
+/// One bookmark's outcome, kept together so the report can be printed in
+/// bookmark order after every fetch has finished.
+struct CheckReport {
+    title: String,
+    provider_id: String,
+    series_id: String,
+    outcome: Result<kuro_store::CheckOutcome, String>,
+}
+
+/// Re-fetch every bookmarked series and diff its episode list against the stored
+/// snapshot.
+///
+/// Providers publish no air dates, so "released recently" is really "kuro first
+/// saw it recently". That makes the first check of a series a baseline rather
+/// than a flood of false alarms, and every check after it meaningful.
+async fn bookmark_check(
+    app: &mut App,
+    bookmarks: &mut Bookmarks,
+    within: i64,
+    all: bool,
+) -> Result<()> {
+    if bookmarks.entries.is_empty() {
+        println!("No bookmarks. Add one with `kuro bookmark add <query>`.");
+        return Ok(());
+    }
+
+    // Resolve provider and URL up front: a bookmark kuro can no longer act on is
+    // a reporting problem, not a fetch to attempt.
+    let mut fetchable = Vec::new();
+    let mut reports: Vec<CheckReport> = Vec::new();
+
+    for b in &bookmarks.entries {
+        let prepared = provider_for_id(app, &b.provider_id)
+            .and_then(|provider| Ok((provider, series_from_bookmark(b)?)));
+
+        match prepared {
+            Ok((provider, series)) => fetchable.push((b.clone(), provider, series)),
+            Err(e) => reports.push(CheckReport {
+                title: b.series_title.clone(),
+                provider_id: b.provider_id.clone(),
+                series_id: b.series_id.clone(),
+                outcome: Err(e.to_string()),
+            }),
+        }
+    }
+
+    if !app.json {
+        eprintln!(
+            "Checking {} bookmark(s) for new episodes…",
+            fetchable.len() + reports.len()
+        );
+    }
+
+    // Bounded fan-out, same shape as a cross-provider search: one slow or hanging
+    // site must not hold up the rest of the list.
+    let limiter = Arc::new(tokio::sync::Semaphore::new(
+        app.config.general.concurrency.max(1),
+    ));
+    let timeout = app.config.general.search_timeout;
+
+    let tasks = fetchable.into_iter().map(|(bookmark, provider, series)| {
+        let limiter = Arc::clone(&limiter);
+        let ctx = app.ctx.clone();
+
+        async move {
+            let _permit = limiter.acquire().await.expect("semaphore is never closed");
+            let id = provider.id();
+            let outcome = orchestrator::guarded(id, timeout, async move {
+                provider.episodes(&ctx, &series).await
+            })
+            .await;
+            (bookmark, outcome)
+        }
+    });
+
+    let fetched = futures::future::join_all(tasks).await;
+
+    // One instant for the whole run, so "new" ages are comparable across series.
+    let now = chrono::Utc::now();
+
+    for (bookmark, fetch) in fetched {
+        let outcome = match fetch.result {
+            Ok(episodes) => {
+                app.note_success(&fetch.provider_id);
+                let numbers: Vec<f32> = episodes.iter().map(|e| e.number).collect();
+                bookmarks
+                    .record_check(&bookmark.provider_id, &bookmark.series_id, &numbers, now)
+                    .map(Ok)
+                    // A bookmark cannot vanish mid-run, but reporting beats panicking.
+                    .unwrap_or_else(|| Err("bookmark disappeared during the check".to_string()))
+            }
+            Err(e) => {
+                app.note_failure(&fetch.provider_id, &e.to_string());
+                Err(e.to_string())
+            }
+        };
+
+        reports.push(CheckReport {
+            title: bookmark.series_title,
+            provider_id: bookmark.provider_id,
+            series_id: bookmark.series_id,
+            outcome,
+        });
+    }
+
+    app.save_health().ok();
+    bookmarks.save(&app.paths).context("saving bookmarks")?;
+
+    if app.json {
+        println!("{}", serde_json::to_string_pretty(&bookmarks.entries)?);
+        return Ok(());
+    }
+
+    print_check_report(bookmarks, &reports, within, all, now);
+    Ok(())
+}
+
+fn print_check_report(
+    bookmarks: &Bookmarks,
+    reports: &[CheckReport],
+    within: i64,
+    all: bool,
+    now: chrono::DateTime<chrono::Utc>,
+) {
+    use kuro_store::CheckOutcome;
+
+    let mut fresh = 0;
+    println!();
+
+    for report in reports {
+        // A series whose episode arrived on an earlier run is still recent news,
+        // so the badge comes from the stored snapshot rather than this run alone.
+        let recent = bookmarks
+            .entries
+            .iter()
+            .find(|b| b.provider_id == report.provider_id && b.series_id == report.series_id)
+            .filter(|b| b.has_new_within(within, now))
+            .and_then(|b| {
+                b.new_age(now)
+                    .map(|age| (b.new_episodes, b.last_episode, age))
+            });
+
+        match (&report.outcome, recent) {
+            (Err(e), _) => {
+                println!(
+                    "\x1b[33m⚠\x1b[0m  {}  {}",
+                    report.title,
+                    crate::ui::dim_stdout(e)
+                );
+            }
+            (Ok(_), Some((count, latest, age))) => {
+                fresh += 1;
+                println!(
+                    "\x1b[32m★\x1b[0m  {}  \x1b[32m{count} new\x1b[0m · up to ep {} · {}",
+                    report.title,
+                    latest.map(fmt_episode).unwrap_or_else(|| "?".to_string()),
+                    humanise_age(age)
+                );
+            }
+            (Ok(CheckOutcome::Baseline { latest }), None) if all => println!(
+                "·  {}  {}",
+                report.title,
+                crate::ui::dim_stdout(format!(
+                    "now tracking from ep {}",
+                    latest
+                        .map(fmt_episode)
+                        .unwrap_or_else(|| "none".to_string())
+                ))
+            ),
+            (Ok(_), None) if all => println!(
+                "·  {}  {}",
+                report.title,
+                crate::ui::dim_stdout("nothing new")
+            ),
+            _ => {}
+        }
+    }
+
+    if fresh == 0 {
+        println!(
+            "No new episodes in the last {within} day{}.",
+            if within == 1 { "" } else { "s" }
+        );
+    } else {
+        println!(
+            "\n{fresh} series with new episodes. Watch one with `kuro next` or `kuro watch <title>`."
+        );
+    }
 }
 
 // ---------------------------------------------------------------------------

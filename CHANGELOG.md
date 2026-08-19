@@ -1,5 +1,19 @@
 # Changelog
 
+## v0.6.6
+
+### Added
+
+- **`kuro bookmark check` — new episodes on the series you follow.** It re-fetches
+  every bookmark and reports what has appeared since the last run; `kuro bookmark
+  list` shows the same ★ badge offline, from the stored snapshot. Providers publish
+  no per-episode air date, so recency is measured from when kuro first saw an
+  episode: the first check of a series records a baseline instead of announcing its
+  entire back catalogue, and every check after it is real news. `--within <DAYS>`
+  (default 7) sets how long that counts as recent, and `--all` shows the bookmarks
+  with nothing new. Existing `bookmarks.json` files load unchanged.
+
+
 ## v0.6.5
 
 ### Fixed

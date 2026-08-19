@@ -92,11 +92,19 @@ kuro download "<query>" --all -j 6         # whole series, six at a time
 
 kuro history                               # --clear to erase
 kuro bookmark add "<query>"                # and `bookmark list`
+kuro bookmark check                        # what aired since you last looked
 kuro provider | config | cache | doctor
 ```
 
 Add `--skip` to jump openings and endings, where [AniSkip] has data — coverage is
 crowd-sourced and thin for donghua, so kuro says when there is nothing to skip.
+
+`bookmark check` re-fetches every followed series and reports what appeared since
+the last run; `bookmark list` shows the same ★ badge from the stored snapshot
+without touching the network. Providers publish no air dates, so the first check of
+a series records a baseline rather than announcing its whole back catalogue — from
+then on, "new" means kuro watched it show up. `--within <DAYS>` (default 7) sets how
+long that stays news.
 
 Global flags: `--provider`, `--quality <best|1080p|720p|…>` (a cap: the closest rung
 at or below it plays), `-S N` to take the Nth result, `--json`, `--dry-run`,

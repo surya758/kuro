@@ -446,13 +446,12 @@ fn prompt_range(episodes: &[Episode]) -> Result<Option<Vec<Episode>>> {
 
 fn bookmark(app: &App, series: &Series) -> Result<()> {
     let mut bookmarks = Bookmarks::load(&app.paths).context("loading bookmarks")?;
-    let added = bookmarks.add(Bookmark {
-        provider_id: series.provider_id.to_string(),
-        series_id: series.id.clone(),
-        series_title: series.title.clone(),
-        url: series.url.to_string(),
-        added_at: chrono::Utc::now(),
-    });
+    let added = bookmarks.add(Bookmark::new(
+        series.provider_id.to_string(),
+        series.id.clone(),
+        series.title.clone(),
+        series.url.to_string(),
+    ));
 
     if added {
         bookmarks.save(&app.paths)?;
