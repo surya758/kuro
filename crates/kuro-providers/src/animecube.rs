@@ -139,13 +139,21 @@ fn matches(item: &Value, needle: &str) -> bool {
         .is_some_and(|a| a.iter().any(|v| hit(Some(v))))
 }
 
-/// The most recent season that actually has episodes, with its identifiers.
+/// One season's episodes plus the identifiers a source lookup needs.
+pub(crate) struct SeasonRef {
+    tab_id: String,
+    season_id: String,
+    /// The site's own season number, used for labelling.
+    number: u32,
+    episodes: Vec<Value>,
+}
+
+/// Every season that actually has episodes, in the site's own order.
 ///
-/// kuro models a series as one flat episode list, while the site groups by season
-/// and restarts numbering in each. Flattening would collide — two "episode 1" —
-/// so the newest populated season is used, which is what the site itself opens on.
-fn latest_populated_season(tabs: &[Value]) -> Option<(String, String, Vec<Value>)> {
-    let mut best: Option<(String, String, Vec<Value>)> = None;
+/// A season with an empty list is skipped rather than kept as a gap: the site
+/// announces seasons before filling them in, and an empty one has nothing to play.
+pub(crate) fn populated_seasons(tabs: &[Value]) -> Vec<SeasonRef> {
+    let mut out = Vec::new();
 
     for tab in tabs {
         let Some(tab_id) = tab.get("id").and_then(Value::as_str) else {
@@ -154,7 +162,7 @@ fn latest_populated_season(tabs: &[Value]) -> Option<(String, String, Vec<Value>
         let Some(seasons) = tab.get("seasons").and_then(Value::as_array) else {
             continue;
         };
-        for season in seasons {
+        for (index, season) in seasons.iter().enumerate() {
             let Some(season_id) = season.get("id").and_then(Value::as_str) else {
                 continue;
             };
@@ -163,12 +171,52 @@ fn latest_populated_season(tabs: &[Value]) -> Option<(String, String, Vec<Value>
                 .and_then(Value::as_array)
                 .cloned()
                 .unwrap_or_default();
-            if !episodes.is_empty() {
-                best = Some((tab_id.to_string(), season_id.to_string(), episodes));
+            if episodes.is_empty() {
+                continue;
             }
+            out.push(SeasonRef {
+                tab_id: tab_id.to_string(),
+                season_id: season_id.to_string(),
+                number: season
+                    .get("number")
+                    .and_then(Value::as_u64)
+                    .unwrap_or(index as u64 + 1) as u32,
+                episodes,
+            });
         }
     }
-    best
+
+    out.sort_by_key(|s| s.number);
+    out
+}
+
+/// Flatten the site's per-season numbering into one continuous run.
+///
+/// kuro models a series as a single flat episode list, while this site restarts
+/// numbering in every season — two "episode 1" cannot both live in that list. Each
+/// season is therefore offset past the one before it, so *Ling Cage* season two
+/// episode one becomes episode 17 rather than shadowing season one's opener.
+///
+/// A single-season series is offset by zero and keeps the site's numbers exactly,
+/// which is the overwhelmingly common case.
+///
+/// The offset walks the highest **raw** number in each season, not the episode
+/// count: season one carries a `6.5` and an `SP` numbered 16 across 16 entries, and
+/// counting entries instead would overlap the next season onto it.
+pub(crate) fn season_offsets(seasons: &[SeasonRef]) -> Vec<f32> {
+    let mut offsets = Vec::with_capacity(seasons.len());
+    let mut running = 0.0f32;
+
+    for season in seasons {
+        offsets.push(running);
+        let highest = season
+            .episodes
+            .iter()
+            .filter_map(|e| e.get("number").and_then(Value::as_f64))
+            .fold(0.0f32, |acc, n| acc.max(n as f32));
+        running += highest;
+    }
+    offsets
 }
 
 /// Player URL for a source entry.
@@ -258,37 +306,56 @@ impl Provider for AnimeCubeProvider {
 
         // A series the site has announced but not filled in yet is a normal state,
         // not a broken scraper — the tabs themselves parsed fine.
-        let Some((tab_id, season_id, entries)) = latest_populated_season(&tabs) else {
+        let seasons = populated_seasons(&tabs);
+        if seasons.is_empty() {
             return Ok(Vec::new());
-        };
+        }
+        let offsets = season_offsets(&seasons);
 
-        let mut out = Vec::with_capacity(entries.len());
-        for entry in &entries {
-            let (Some(id), Some(number)) = (
-                entry.get("id").and_then(Value::as_str),
-                entry.get("number").and_then(Value::as_f64),
-            ) else {
-                continue;
-            };
+        let mut out = Vec::new();
+        for (season, offset) in seasons.iter().zip(offsets) {
+            for entry in &season.episodes {
+                let (Some(id), Some(number)) = (
+                    entry.get("id").and_then(Value::as_str),
+                    entry.get("number").and_then(Value::as_f64),
+                ) else {
+                    continue;
+                };
 
-            // The mirror lookup needs all three identifiers, so they ride along in
-            // the episode's URL rather than being recomputed later.
-            let path = format!(
-                "/api/anime/{}/episode/{}/sources?primaryTabId={}&seasonId={}",
-                series.id, id, tab_id, season_id
-            );
-            let Ok(url) = self.join(&path) else { continue };
+                // The source lookup needs all three identifiers, and each season
+                // has its own, so they ride along in the episode's URL rather than
+                // being recomputed from a series-wide guess later.
+                let path = format!(
+                    "/api/anime/{}/episode/{}/sources?primaryTabId={}&seasonId={}",
+                    series.id, id, season.tab_id, season.season_id
+                );
+                let Ok(url) = self.join(&path) else { continue };
 
-            out.push(Episode {
-                series_id: series.id.clone(),
-                number: number as f32,
-                title: entry
+                // The site labels its own episodes "Season 1 Episode 1", which is
+                // what keeps a renumbered list readable — kuro's episode 17 says
+                // plainly that it is season two's first. Synthesised only when the
+                // site left the label empty.
+                let title = entry
                     .get("title")
                     .and_then(Value::as_str)
                     .filter(|t| !t.is_empty())
-                    .map(str::to_string),
-                url,
-            });
+                    .map(str::to_string)
+                    .or_else(|| {
+                        let display = entry
+                            .get("numberDisplay")
+                            .and_then(Value::as_str)
+                            .map(str::to_string)
+                            .unwrap_or_else(|| number.to_string());
+                        Some(format!("Season {} Episode {display}", season.number))
+                    });
+
+                out.push(Episode {
+                    series_id: series.id.clone(),
+                    number: number as f32 + offset,
+                    title,
+                    url,
+                });
+            }
         }
 
         out.sort_by(|a, b| {
@@ -423,24 +490,80 @@ mod tests {
         assert!(matches(&v, "ni tian"));
     }
 
+    /// The real shape of `ling-cage`: season one runs 1–14 with a `6.5` and an
+    /// `SP` numbered 16, and season two restarts at 1.
+    fn two_seasons() -> Value {
+        item(
+            r#"[{"id":"primary-1","seasons":[
+                 {"id":"tab-1","number":1,"episodes":[
+                   {"id":"s1e1","number":1},{"id":"s1e6","number":6},
+                   {"id":"s1e6.5","number":6.5,"numberDisplay":"6.5"},
+                   {"id":"s1e14","number":14},
+                   {"id":"s1sp","number":16,"numberDisplay":"SP"}]},
+                 {"id":"tab-2","number":2,"episodes":[
+                   {"id":"s2e1","number":1},{"id":"s2e12","number":12}]}
+               ]}]"#,
+        )
+    }
+
     #[test]
-    fn the_newest_populated_season_wins() {
+    fn every_populated_season_is_kept() {
+        let seasons = populated_seasons(two_seasons().as_array().unwrap());
+        assert_eq!(seasons.len(), 2);
+        assert_eq!(seasons[0].season_id, "tab-1");
+        assert_eq!(seasons[1].season_id, "tab-2");
+    }
+
+    #[test]
+    fn a_later_season_is_offset_past_the_one_before_it() {
+        let seasons = populated_seasons(two_seasons().as_array().unwrap());
+        let offsets = season_offsets(&seasons);
+
+        // Season one's highest number is the SP's 16, not its entry count of 5.
+        assert_eq!(offsets, vec![0.0, 16.0]);
+    }
+
+    #[test]
+    fn a_single_season_series_keeps_the_sites_own_numbers() {
         let tabs = item(
             r#"[{"id":"primary-1","seasons":[
-                 {"id":"tab-1","episodes":[]},
-                 {"id":"tab-2","episodes":[{"id":"ep-1","number":1}]}
+             {"id":"tab-1","number":1,"episodes":[{"id":"e1","number":1}]}]}]"#,
+        );
+        let seasons = populated_seasons(tabs.as_array().unwrap());
+        assert_eq!(season_offsets(&seasons), vec![0.0]);
+    }
+
+    #[test]
+    fn an_empty_season_is_skipped_rather_than_leaving_a_gap() {
+        let tabs = item(
+            r#"[{"id":"primary-1","seasons":[
+                 {"id":"tab-1","number":1,"episodes":[]},
+                 {"id":"tab-2","number":2,"episodes":[{"id":"ep-1","number":1}]}
                ]}]"#,
         );
-        let (tab, season, eps) = latest_populated_season(tabs.as_array().unwrap()).unwrap();
-        assert_eq!(tab, "primary-1");
-        assert_eq!(season, "tab-2");
-        assert_eq!(eps.len(), 1);
+        let seasons = populated_seasons(tabs.as_array().unwrap());
+        assert_eq!(seasons.len(), 1);
+        assert_eq!(seasons[0].season_id, "tab-2");
+        // Nothing precedes it in the flat list, so it must not be pushed along.
+        assert_eq!(season_offsets(&seasons), vec![0.0]);
+    }
+
+    #[test]
+    fn seasons_are_ordered_by_the_sites_own_number() {
+        let tabs = item(
+            r#"[{"id":"primary-1","seasons":[
+                 {"id":"tab-b","number":2,"episodes":[{"id":"b","number":1}]},
+                 {"id":"tab-a","number":1,"episodes":[{"id":"a","number":1}]}
+               ]}]"#,
+        );
+        let seasons = populated_seasons(tabs.as_array().unwrap());
+        assert_eq!(seasons[0].season_id, "tab-a");
     }
 
     #[test]
     fn a_series_with_no_episodes_yet_yields_nothing() {
         let tabs = item(r#"[{"id":"primary-1","seasons":[{"id":"tab-1","episodes":[]}]}]"#);
-        assert!(latest_populated_season(tabs.as_array().unwrap()).is_none());
+        assert!(populated_seasons(tabs.as_array().unwrap()).is_empty());
     }
 
     #[test]

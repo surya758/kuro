@@ -1,5 +1,29 @@
 # Changelog
 
+## v0.6.9
+
+### Fixed
+
+- **animecube showed only a series' newest season.** *Ling Cage* has fourteen
+  episodes in season one and twelve in season two, and kuro listed the twelve —
+  season one was unreachable. The site restarts numbering in every season, so a flat
+  list would have held two "episode 1"; each season is now offset past the one
+  before it, giving a continuous 1–28 where season two's opener is episode 17. The
+  site's own "Season 2 Episode 1" label rides along on every entry, so the mapping
+  stays visible while browsing.
+
+  The offset walks the highest number in each season rather than its episode count,
+  because season one carries a `6.5` and an `SP` numbered 16 across sixteen entries
+  — counting entries would have overlapped season two onto it.
+
+  Seasons the site has announced but not filled in are skipped rather than left as a
+  gap, which keeps single-season numbering identical to before. *Against the Gods*
+  is the case that matters: its season one is empty and its season two holds all
+  twenty episodes, so its numbering — and any watch history keyed to it — is
+  untouched. Only genuinely multi-season series are renumbered, and existing history
+  for those now points one season earlier.
+
+
 ## v0.6.8
 
 ### Changed
