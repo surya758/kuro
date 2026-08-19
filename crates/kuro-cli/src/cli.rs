@@ -228,8 +228,10 @@ pub enum BookmarkAction {
     Add {
         query: String,
     },
+    /// Remove a followed series, by title or by id.
     Rm {
-        series_id: String,
+        #[arg(value_name = "TITLE")]
+        query: String,
     },
     /// List followed series, flagging any with a recently released episode.
     List,

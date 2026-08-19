@@ -136,7 +136,7 @@ impl History {
 /// How long a newly-spotted episode keeps its "new" badge by default.
 pub const DEFAULT_NEW_WINDOW_DAYS: i64 = 7;
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Bookmark {
     pub provider_id: String,
     pub series_id: String,
@@ -260,6 +260,15 @@ impl Bookmark {
     }
 }
 
+/// The result of asking to remove a bookmark.
+#[derive(Debug, Clone, PartialEq)]
+pub enum RemoveOutcome {
+    Removed(Bookmark),
+    NotFound,
+    /// The query matched several titles; nothing was removed.
+    Ambiguous(Vec<String>),
+}
+
 /// What a check against a freshly-fetched episode list turned up.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum CheckOutcome {
@@ -312,11 +321,37 @@ impl Bookmarks {
         true
     }
 
-    /// Returns `true` if something was removed.
-    pub fn remove(&mut self, series_id: &str) -> bool {
-        let before = self.entries.len();
-        self.entries.retain(|b| b.series_id != series_id);
-        self.entries.len() != before
+    /// Remove one bookmark, identified by its id or by its title.
+    ///
+    /// Titles are what `bookmark list` shows, so they are what people have to hand;
+    /// the id still works because it is stable and unambiguous. A title that could
+    /// mean more than one bookmark removes nothing — guessing which series someone
+    /// meant to stop following is not a decision to make on their behalf.
+    pub fn remove(&mut self, query: &str) -> RemoveOutcome {
+        let query = query.trim();
+
+        if let Some(idx) = self.entries.iter().position(|b| b.series_id == query) {
+            return RemoveOutcome::Removed(self.entries.remove(idx));
+        }
+
+        let needle = query.to_lowercase();
+        let matched: Vec<usize> = self
+            .entries
+            .iter()
+            .enumerate()
+            .filter(|(_, b)| b.series_title.to_lowercase().contains(&needle))
+            .map(|(i, _)| i)
+            .collect();
+
+        match matched.as_slice() {
+            [] => RemoveOutcome::NotFound,
+            [only] => RemoveOutcome::Removed(self.entries.remove(*only)),
+            many => RemoveOutcome::Ambiguous(
+                many.iter()
+                    .map(|i| self.entries[*i].series_title.clone())
+                    .collect(),
+            ),
+        }
     }
 
     pub fn find_mut(&mut self, provider_id: &str, series_id: &str) -> Option<&mut Bookmark> {
@@ -469,8 +504,70 @@ mod tests {
         assert!(b.add(mk()));
         assert!(!b.add(mk()));
         assert_eq!(b.entries.len(), 1);
-        assert!(b.remove("s"));
-        assert!(!b.remove("s"));
+        assert!(matches!(b.remove("s"), RemoveOutcome::Removed(_)));
+        assert_eq!(b.remove("s"), RemoveOutcome::NotFound);
+    }
+
+    #[test]
+    fn a_bookmark_can_be_removed_by_title() {
+        let mut b = Bookmarks::default();
+        b.add(Bookmark::new(
+            "p",
+            "slime-s4-5238",
+            "Slime Season 4",
+            "https://x.tld",
+        ));
+
+        // Case-insensitive and partial, because nobody retypes a full title.
+        assert!(matches!(b.remove("slime"), RemoveOutcome::Removed(_)));
+        assert!(b.entries.is_empty());
+    }
+
+    #[test]
+    fn an_ambiguous_title_removes_nothing() {
+        let mut b = Bookmarks::default();
+        b.add(Bookmark::new(
+            "p",
+            "slime-s3",
+            "Slime Season 3",
+            "https://x.tld",
+        ));
+        b.add(Bookmark::new(
+            "p",
+            "slime-s4",
+            "Slime Season 4",
+            "https://x.tld",
+        ));
+
+        match b.remove("slime") {
+            RemoveOutcome::Ambiguous(titles) => assert_eq!(titles.len(), 2),
+            other => panic!("expected ambiguity, got {other:?}"),
+        }
+        assert_eq!(b.entries.len(), 2, "nothing may be removed while ambiguous");
+    }
+
+    #[test]
+    fn an_id_beats_a_title_that_could_be_ambiguous() {
+        let mut b = Bookmarks::default();
+        b.add(Bookmark::new(
+            "p",
+            "slime",
+            "Slime Season 3",
+            "https://x.tld",
+        ));
+        b.add(Bookmark::new(
+            "p",
+            "slime-s4",
+            "Slime Season 4",
+            "https://x.tld",
+        ));
+
+        // "slime" is an exact id here, so it must not be treated as a fuzzy title.
+        match b.remove("slime") {
+            RemoveOutcome::Removed(bookmark) => assert_eq!(bookmark.series_id, "slime"),
+            other => panic!("expected the id match, got {other:?}"),
+        }
+        assert_eq!(b.entries.len(), 1);
     }
 
     fn bookmarked() -> Bookmarks {

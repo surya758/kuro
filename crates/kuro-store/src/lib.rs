@@ -11,6 +11,7 @@ pub mod paths;
 pub use config::{Config, General, HealthConfig, PlayerConfig, ProviderConfig};
 pub use health::{HealthStore, HealthTransition, ProviderHealth};
 pub use history::{
-    Bookmark, Bookmarks, CheckOutcome, Freshness, History, HistoryEntry, DEFAULT_NEW_WINDOW_DAYS,
+    Bookmark, Bookmarks, CheckOutcome, Freshness, History, HistoryEntry, RemoveOutcome,
+    DEFAULT_NEW_WINDOW_DAYS,
 };
 pub use paths::{write_atomic, Paths, StoreError};

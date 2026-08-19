@@ -91,7 +91,7 @@ kuro download "<query>" --ep 1-5 -o ~/Anime
 kuro download "<query>" --all -j 6         # whole series, six at a time
 
 kuro history                               # --clear to erase
-kuro bookmark add "<query>"                # and `bookmark list`
+kuro bookmark add "<query>"                # and `bookmark list`, `bookmark rm "<title>"`
 kuro bookmark check                        # what aired since you last looked
 kuro provider | config | cache | doctor
 ```

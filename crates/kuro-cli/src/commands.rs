@@ -713,9 +713,11 @@ pub async fn bookmark(app: &mut App, action: &BookmarkAction) -> Result<()> {
                         unchecked += 1;
                     }
 
+                    // The id is deliberately not shown: it is an internal slug,
+                    // and `bookmark rm` takes a title. `--json` still carries it.
                     println!(
-                        "{}  \x1b[2m[{}] {}\x1b[0m{}",
-                        b.series_title, b.provider_id, b.series_id, badge
+                        "{}  \x1b[2m[{}]\x1b[0m{}",
+                        b.series_title, b.provider_id, badge
                     );
                 }
 
@@ -730,14 +732,22 @@ pub async fn bookmark(app: &mut App, action: &BookmarkAction) -> Result<()> {
             }
         }
 
-        BookmarkAction::Rm { series_id } => {
-            if bookmarks.remove(series_id) {
+        BookmarkAction::Rm { query } => match bookmarks.remove(query) {
+            kuro_store::RemoveOutcome::Removed(bookmark) => {
                 bookmarks.save(&app.paths)?;
-                println!("Removed {series_id}.");
-            } else {
-                println!("No bookmark with id `{series_id}`.");
+                println!("Removed {}.", bookmark.series_title);
             }
-        }
+            kuro_store::RemoveOutcome::NotFound => {
+                println!("No bookmark matching `{query}`.");
+            }
+            kuro_store::RemoveOutcome::Ambiguous(titles) => {
+                println!("`{query}` matches {} bookmarks:", titles.len());
+                for title in &titles {
+                    println!("  {title}");
+                }
+                println!("Use more of the title to pick one.");
+            }
+        },
 
         BookmarkAction::Add { query } => {
             let query = query.trim().to_string();

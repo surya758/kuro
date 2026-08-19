@@ -1,5 +1,20 @@
 # Changelog
 
+## v0.6.8
+
+### Changed
+
+- **`bookmark list` no longer prints the provider's internal slug.** A line was two
+  thirds machine identifier — `that-time-i-got-reincarnated-as-a-slime-season-4-5238`
+  next to the title that already said so. Only the title, the provider, and any new
+  episode are shown now; `--json` still carries the id for scripting.
+- **`bookmark rm` takes a title.** It previously required the exact slug, which was
+  only discoverable from the line above, so removing that line meant removing the
+  reason it was there. Matching is partial and case-insensitive (`kuro bookmark rm
+  slime`), ids still work, and a title matching several bookmarks removes nothing
+  and lists the candidates instead.
+
+
 ## v0.6.7
 
 ### Added
